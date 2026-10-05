@@ -36,11 +36,11 @@ const { registerAdminAccountRoutes } = require("./admin-account-routes");
 const { registerAdminAnalyticsRoutes } = require("./admin-analytics-routes");
 const { createAdminAccountAccess } = require("./admin-account-access");
 const {
-  allowAdminSocketRequest,
+  ADMIN_SOCKET_CORS_OPTIONS,
+  configureCorsMiddleware,
   createAdminSocketAuth,
   registerAuthGate,
   registerDocumentAuthGate,
-  rejectCrossOriginMutation,
 } = require("./admin-access-gate");
 const { registerAdminAuthRoutes } = require("./admin-auth-routes");
 const { registerAdminBagRoutes } = require("./admin-bag-routes");
@@ -74,11 +74,6 @@ const { registerAdminSystemRoutes } = require("./admin-system-routes");
 const userStore = require("../models/user-store");
 
 const adminLogger = createModuleLogger("admin");
-const DEFAULT_ALLOWED_ORIGINS = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "http://127.0.0.1:5173",
-];
 const ONE_MINUTE_MS = 60 * 1000;
 const LOG_SNAPSHOT_LIMIT = 100;
 const HTTP_REQUEST_TIMEOUT_MS = 120 * 1000;
@@ -117,26 +112,6 @@ function emitRealtimeAccountLog(logEntry) {
   const accountId = String(safeLogEntry.accountId || "").trim();
   if (!accountId) return;
   io.to(`account:${  accountId}`).emit("account-log:new", safeLogEntry);
-}
-
-function configureCorsMiddleware(expressApp) {
-  expressApp.use((req, res, next) => {
-    const allowedOrigins = CONFIG.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS;
-    const origin = req.headers.origin;
-    if (origin && allowedOrigins.includes(origin)) {
-      res.header("Access-Control-Allow-Origin", origin);
-    }
-    res.vary("Origin");
-    res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS, PUT");
-    res.header(
-      "Access-Control-Allow-Headers",
-      "Content-Type, x-account-id, x-admin-token",
-    );
-    res.header("Access-Control-Allow-Credentials", "true");
-    res.header("Access-Control-Max-Age", "86400");
-    if (req.method === "OPTIONS") return res.sendStatus(200);
-    return next();
-  });
 }
 
 function configureStaticAssets(expressApp, webDist) {
@@ -312,7 +287,6 @@ function startAdminServer(dataProvider) {
   // Explicitly configure trusted remote proxies instead of trusting every client.
   app.set("trust proxy", process.env.ADMIN_TRUST_PROXY || "loopback");
   app.disable("x-powered-by");
-  app.use("/api", rejectCrossOriginMutation);
   app.use(express.json({ limit: "256kb" }));
 
   const adminSessionManager = createAdminSessionManager({
@@ -660,13 +634,7 @@ function startAdminServer(dataProvider) {
     pingTimeout: 10000,
     connectTimeout: 10000,
     maxHttpBufferSize: 256 * 1024,
-    allowRequest: allowAdminSocketRequest,
-    cors: {
-      origin: CONFIG.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS,
-      credentials: true,
-      methods: ["GET", "POST"],
-      allowedHeaders: ["x-admin-token", "x-account-id"],
-    },
+    cors: ADMIN_SOCKET_CORS_OPTIONS,
   });
   io.use(createAdminSocketAuth(getAdminSession));
   io.on("connection", (socket) => {

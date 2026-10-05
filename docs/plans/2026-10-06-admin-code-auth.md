@@ -9,7 +9,7 @@
 ## Implementation
 
 1. Add expiring, revocable cookie sessions and disconnect expired realtime clients.
-2. Replace authentication routes, limit failed verification attempts and reject cross-origin mutations. Keep only health, branding and temporary token-protected certificate downloads public.
+2. Replace authentication routes and limit failed verification attempts. Allow cross-origin requests while keeping session and account permission checks. Keep only health, branding and temporary token-protected certificate downloads public.
 3. Add a code verification page and server-validated navigation guards. Preserve local paths, queries and fragments; reject external redirect destinations. Remove frontend credential storage and adapt realtime and scan-login requests.
 4. Add a logout control, avoid protected requests before verification, and update Docker health checks.
 5. Test with isolated local fixtures, type-check and build the frontend, and document deployment behavior. Do not connect to game accounts or open a browser for acceptance.
@@ -20,6 +20,6 @@
 - Cookie flags, expiration boundaries, revocation and realtime disconnects are covered.
 - Protected endpoints cannot be reached by anonymous requests or fake credentials.
 - Login throttling cannot be bypassed with forwarded IP headers.
-- Cross-origin mutations are rejected; normal same-origin API calls remain supported.
+- Cross-origin login, authenticated mutations and Socket.IO connections are supported; missing or forged sessions still cannot access protected endpoints.
 - Original internal destinations are restored, external and malformed redirects are rejected.
 - Frontend type checking and production build pass; visual acceptance remains manual.

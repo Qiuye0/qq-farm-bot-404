@@ -3,12 +3,13 @@ const { once } = require('node:events');
 const test = require('node:test');
 const express = require('express');
 const { Server } = require('socket.io');
+const WebSocket = require('ws');
 const {
-  allowAdminSocketRequest,
+  ADMIN_SOCKET_CORS_OPTIONS,
+  configureCorsMiddleware,
   createAdminSocketAuth,
   registerAuthGate,
   registerDocumentAuthGate,
-  rejectCrossOriginMutation,
 } = require('../src/controllers/admin-access-gate');
 const { createLoginLimiter, registerAdminAuthRoutes } = require('../src/controllers/admin-auth-routes');
 const {
@@ -24,7 +25,7 @@ async function fixture(t) {
   const app = express();
   app.set('trust proxy', 'loopback');
   const sessions = createAdminSessionManager({ now: () => time, getIo: () => io });
-  app.use('/api', rejectCrossOriginMutation);
+  configureCorsMiddleware(app);
   app.use(express.json({ limit: '256kb' }));
   registerAuthGate(app, sessions.requireAdminToken);
   registerDocumentAuthGate(app, sessions.hasToken);
@@ -45,7 +46,7 @@ async function fixture(t) {
   app.get('*', (_req, res) => res.send('<html>SPA shell</html>'));
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  io = new Server(server, { allowRequest: allowAdminSocketRequest });
+  io = new Server(server, { cors: ADMIN_SOCKET_CORS_OPTIONS });
   io.use(createAdminSocketAuth(sessions.getSession));
   const base = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => {
@@ -196,7 +197,7 @@ test('logout revokes server access, clears the cookie and rejects reuse', async 
   assert.equal((await f.request('/api/logout', { body: {}, headers: { Cookie: cookie } })).status, 401);
 });
 
-test('HTTPS proxy login uses a Secure cookie and forbids foreign-origin mutations', async (t) => {
+test('HTTPS proxy login uses a Secure cookie', async (t) => {
   const f = await fixture(t);
   const httpsOrigin = f.base.replace('http:', 'https:');
   const secure = await f.request('/api/login', {
@@ -205,17 +206,49 @@ test('HTTPS proxy login uses a Secure cookie and forbids foreign-origin mutation
   });
   assert.equal(secure.status, 200);
   assert.match(secure.headers.get('set-cookie'), /Secure/);
-  const cookie = secure.headers.get('set-cookie').split(';')[0];
+});
+
+test('cross-origin login and authenticated mutations are allowed but still require a valid session', async (t) => {
+  const f = await fixture(t);
   for (const headers of [
-    { Origin: 'https://evil.example' },
+    { Origin: 'https://panel.example' },
     { Origin: 'null' },
     { 'Sec-Fetch-Site': 'cross-site' },
     { Origin: f.base.replace('127.0.0.1', 'localhost') },
+    { Origin: 'https://panel.example', 'X-Forwarded-Proto': 'http' },
   ]) {
-    assert.equal((await f.request('/api/accounts', { body: {}, headers: { Cookie: cookie, ...headers } })).status, 403);
-    assert.equal((await f.request('/api/login', { body: { code: 'chenjunjie' }, headers })).status, 403);
+    const cookie = await f.login(headers);
+    const response = await f.request('/api/accounts', { body: {}, headers: { Cookie: cookie, ...headers } });
+    assert.equal(response.status, 200);
+    if (headers.Origin)
+      assert.equal(response.headers.get('access-control-allow-origin'), headers.Origin);
+    assert.equal((await f.request('/api/accounts', { body: {}, headers })).status, 401);
+    assert.equal((await f.request('/api/accounts', {
+      body: {},
+      headers: { ...headers, Cookie: `${ADMIN_SESSION_COOKIE}=forged`, 'x-admin-token': 'fake' },
+    })).status, 401);
+    assert.equal((await f.request('/api/login', { body: { code: 'wrong' }, headers })).status, 401);
   }
-  assert.equal((await f.request('/api/accounts', { body: {}, headers: { Cookie: cookie, Origin: f.base } })).status, 200);
+});
+
+test('API and Socket.IO CORS preflight accepts arbitrary origins and credentials', async (t) => {
+  const f = await fixture(t);
+  for (const path of ['/api/accounts', '/socket.io/?EIO=4&transport=polling']) {
+    const response = await f.request(path, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://panel.example',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type,x-admin-token,x-account-id',
+      },
+    });
+    assert.ok([200, 204].includes(response.status));
+    assert.equal(response.headers.get('access-control-allow-origin'), 'https://panel.example');
+    assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
+    assert.match(response.headers.get('vary'), /Origin/);
+    assert.match(response.headers.get('access-control-allow-methods'), /POST/);
+    assert.match(response.headers.get('access-control-allow-headers'), /x-admin-token/);
+  }
 });
 
 test('malformed cookie data is rejected without throwing', () => {
@@ -247,16 +280,30 @@ test('Socket.IO uses the same session, rejects forged tokens and disconnects rev
   assert.equal(nextError.message, 'Unauthorized');
 });
 
-test('websocket handshake origin cannot use an authenticated cookie from another site', () => {
-  for (const [origin, expected] of [
-    ['http://farm.example:3007', true],
-    ['https://farm.example:3007', true],
-    ['https://evil.example', false],
-    ['http://farm.example:4000', false],
-    ['null', false],
+test('cross-origin websocket connections still require a valid session', { timeout: 10000 }, async (t) => {
+  const f = await fixture(t);
+  const cookie = await f.login();
+  for (const [sessionCookie, expectedPacket] of [
+    [cookie, /^40\{/],
+    ['', /^44.*Unauthorized/],
+    [`${ADMIN_SESSION_COOKIE}=forged`, /^44.*Unauthorized/],
   ]) {
-    let allowed;
-    allowAdminSocketRequest({ headers: { host: 'farm.example:3007', origin } }, (_error, value) => allowed = value);
-    assert.equal(allowed, expected);
+    const socket = new WebSocket(`${f.base.replace('http:', 'ws:')}/socket.io/?EIO=4&transport=websocket`, {
+      headers: { Origin: 'https://panel.example', Cookie: sessionCookie },
+    });
+    t.after(() => socket.terminate());
+    const packet = new Promise((resolve, reject) => {
+      socket.on('error', reject);
+      socket.on('message', (data) => {
+        const message = data.toString();
+        if (message.startsWith('0'))
+          socket.send('40');
+        else if (message.startsWith('40') || message.startsWith('44'))
+          resolve(message);
+      });
+    });
+    assert.match(await packet, expectedPacket);
+    socket.close();
+    await once(socket, 'close');
   }
 });

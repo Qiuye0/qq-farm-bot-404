@@ -2,6 +2,28 @@ const path = require('node:path');
 const { getAdminRequestToken } = require('./admin-session-manager');
 
 const PUBLIC_GET_PATHS = new Set(['/health', '/public/login-links']);
+const ADMIN_SOCKET_CORS_OPTIONS = {
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['x-admin-token', 'x-account-id'],
+};
+
+function configureCorsMiddleware(app) {
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin)
+      res.header('Access-Control-Allow-Origin', origin);
+    res.vary('Origin');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS, PUT');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, x-account-id, x-admin-token');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Max-Age', '86400');
+    if (req.method === 'OPTIONS')
+      return res.sendStatus(200);
+    return next();
+  });
+}
 
 function registerAuthGate(app, requireAdminToken) {
   app.use('/api', (req, res, next) => {
@@ -12,25 +34,6 @@ function registerAuthGate(app, requireAdminToken) {
     return requireAdminToken(req, res, next);
   });
   app.use('/game-config', requireAdminToken);
-}
-
-function rejectCrossOriginMutation(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method))
-    return next();
-  if (req.headers['sec-fetch-site'] === 'cross-site')
-    return res.status(403).json({ ok: false, error: 'Cross-origin request denied' });
-  const origin = req.headers.origin;
-  if (origin) {
-    try {
-      const url = new URL(origin);
-      if (url.origin !== `${req.protocol}://${req.get('host')}`)
-        return res.status(403).json({ ok: false, error: 'Cross-origin request denied' });
-    }
-    catch {
-      return res.status(403).json({ ok: false, error: 'Cross-origin request denied' });
-    }
-  }
-  return next();
 }
 
 function registerDocumentAuthGate(app, hasToken) {
@@ -46,19 +49,6 @@ function registerDocumentAuthGate(app, hasToken) {
   });
 }
 
-function allowAdminSocketRequest(req, callback) {
-  const origin = req.headers.origin;
-  if (!origin)
-    return callback(null, true);
-  try {
-    const url = new URL(origin);
-    return callback(null, ['http:', 'https:'].includes(url.protocol) && url.host === req.headers.host);
-  }
-  catch {
-    return callback(null, false);
-  }
-}
-
 function createAdminSocketAuth(getSession) {
   return (socket, next) => {
     const token = socket.handshake.auth?.token || getAdminRequestToken(socket.handshake);
@@ -72,9 +62,9 @@ function createAdminSocketAuth(getSession) {
 }
 
 module.exports = {
-  allowAdminSocketRequest,
+  ADMIN_SOCKET_CORS_OPTIONS,
+  configureCorsMiddleware,
   createAdminSocketAuth,
   registerAuthGate,
   registerDocumentAuthGate,
-  rejectCrossOriginMutation,
 };
