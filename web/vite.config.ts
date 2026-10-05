@@ -61,12 +61,12 @@ export default defineConfig({
     proxy: {
       '/socket.io': {
         target: 'http://localhost:3007',
-        changeOrigin: true,
+        changeOrigin: false,
         ws: true,
       },
       '/api': {
         target: 'http://localhost:3007',
-        changeOrigin: true,
+        changeOrigin: false,
       },
       '/game-config': {
         target: 'http://localhost:3007',

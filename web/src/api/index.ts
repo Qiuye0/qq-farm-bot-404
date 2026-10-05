@@ -1,8 +1,8 @@
 import { useStorage } from '@vueuse/core'
 import axios from 'axios'
 import { useToastStore } from '@/stores/toast'
+import { redirectToCodeLogin } from '@/utils/admin-auth'
 
-const tokenRef = useStorage('admin_token', '')
 const accountIdRef = useStorage('current_account_id', '')
 
 const api = axios.create({
@@ -20,10 +20,6 @@ function showNetworkToast(message: string) {
 }
 
 api.interceptors.request.use((config) => {
-  const token = tokenRef.value
-  if (token) {
-    config.headers['x-admin-token'] = token
-  }
   const accountId = accountIdRef.value
   if (accountId) {
     config.headers['x-account-id'] = accountId
@@ -37,20 +33,17 @@ api.interceptors.response.use((response) => {
   if (axios.isCancel(error) || error?.code === 'ERR_CANCELED') {
     return Promise.reject(error)
   }
+  if (error.response?.status === 401) {
+    redirectToCodeLogin()
+    return Promise.reject(error)
+  }
   if (error?.config?.skipErrorToast === true)
     return Promise.reject(error)
 
   const toast = useToastStore()
 
   if (error.response) {
-    if (error.response.status === 401) {
-      if (!window.location.pathname.includes('/login')) {
-        tokenRef.value = ''
-        window.location.href = '/login'
-        toast.warning('登录已过期，请重新登录')
-      }
-    }
-    else if (error.response.status >= 500) {
+    if (error.response.status >= 500) {
       const backendError = String(error.response.data?.error || error.response.data?.message || '')
       if (backendError === '账号未运行' || backendError === 'API Timeout' || backendError === 'Request Timeout') {
         return Promise.reject(error)

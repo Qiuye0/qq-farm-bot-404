@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import api from '@/api'
 
 class ProtocolNetworkError extends Error {}
 
@@ -25,32 +26,13 @@ export const useWxLoginStore = defineStore('wx-login', () => {
     errorMessage.value = ''
   }
 
-  function buildProtocolHeaders() {
-    return {
-      'Content-Type': 'application/json',
-      'x-admin-token': localStorage.getItem('admin_token') || '',
-    }
-  }
-
   async function requestProtocol(body: Record<string, any>) {
-    let response: Response
     try {
-      response = await fetch('/api/wx-login/protocol', {
-        method: 'POST',
-        headers: buildProtocolHeaders(),
-        body: JSON.stringify(body),
-      })
+      const { data } = await api.post('/api/wx-login/protocol', body)
+      return data
     }
     catch (error: any) {
-      throw new ProtocolNetworkError(error.message)
-    }
-    if (!response.ok)
-      throw new Error(`HTTP ${response.status}`)
-    try {
-      return await response.json()
-    }
-    catch (error: any) {
-      if (error instanceof TypeError || error?.name === 'AbortError')
+      if (!error?.response)
         throw new ProtocolNetworkError(error.message)
       throw error
     }

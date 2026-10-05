@@ -1,21 +1,35 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import MysteryMerchantBanner from '@/components/shop/MysteryMerchantBanner.vue'
 import Sidebar from '@/components/Sidebar.vue'
 import TopAccountMenu from '@/components/TopAccountMenu.vue'
 import { useAppStore } from '@/stores/app'
+import { useToastStore } from '@/stores/toast'
+import { logoutAdmin } from '@/utils/admin-auth'
 
 const appStore = useAppStore()
 const { loginPageConfig, sidebarOpen } = storeToRefs(appStore)
+const loggingOut = ref(false)
 
 onMounted(() => {
   appStore.fetchLoginPageConfig()
 })
 
-onUnmounted(() => {
-  // 清理逻辑
-})
+async function logout() {
+  if (loggingOut.value)
+    return
+  loggingOut.value = true
+  try {
+    await logoutAdmin()
+  }
+  catch {
+    useToastStore().error('退出失败，请重试')
+  }
+  finally {
+    loggingOut.value = false
+  }
+}
 </script>
 
 <template>
@@ -50,7 +64,19 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <TopAccountMenu />
+        <div class="min-w-0 flex items-center gap-1">
+          <TopAccountMenu />
+          <button
+            class="h-9 w-9 flex shrink-0 items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700"
+            type="button"
+            title="退出验证"
+            aria-label="退出验证"
+            :disabled="loggingOut"
+            @click="logout"
+          >
+            <span :class="loggingOut ? 'i-svg-spinners-ring-resize' : 'i-carbon-logout'" aria-hidden="true" />
+          </button>
+        </div>
       </header>
 
       <!-- Main Content Area -->

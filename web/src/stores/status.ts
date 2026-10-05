@@ -1,10 +1,10 @@
 import type { Socket } from 'socket.io-client'
-import { useStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
 import { io } from 'socket.io-client'
 import { computed, ref } from 'vue'
 import api from '@/api'
 import { useAccountStore } from '@/stores/account'
+import { adminAuthenticated, redirectToCodeLogin } from '@/utils/admin-auth'
 
 // Define interfaces for better type checking
 interface DailyGift {
@@ -35,7 +35,6 @@ export const useStatusStore = defineStore('status', () => {
   const realtimeConnected = ref(false)
   const realtimeLogsEnabled = ref(true)
   const currentRealtimeAccountId = ref('')
-  const tokenRef = useStorage('admin_token', '')
 
   let socket: Socket | null = null
 
@@ -191,9 +190,7 @@ export const useStatusStore = defineStore('status', () => {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 10000,
-      auth: {
-        token: tokenRef.value,
-      },
+      withCredentials: true,
     })
 
     socket.on('connect', () => {
@@ -212,6 +209,11 @@ export const useStatusStore = defineStore('status', () => {
 
     socket.on('connect_error', (err) => {
       realtimeConnected.value = false
+      if (err.message === 'Unauthorized') {
+        socket?.disconnect()
+        redirectToCodeLogin()
+        return
+      }
       console.error('[realtime] 连接失败:', err.message)
     })
 
@@ -225,12 +227,11 @@ export const useStatusStore = defineStore('status', () => {
 
   function connectRealtime(accountId: string) {
     currentRealtimeAccountId.value = String(accountId || '').trim()
-    if (!tokenRef.value)
+    if (!adminAuthenticated.value)
       return
 
     const client = ensureRealtimeSocket()
     client.auth = {
-      token: tokenRef.value,
       accountId: currentRealtimeAccountId.value || 'all',
     }
 

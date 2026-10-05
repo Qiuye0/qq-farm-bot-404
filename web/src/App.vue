@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { Theme } from '@/stores/app'
-import { onMounted } from 'vue'
+import { watch } from 'vue'
 import { RouterView } from 'vue-router'
 import ToastContainer from '@/components/ToastContainer.vue'
 import { useAppStore } from '@/stores/app'
+import { adminAuthenticated } from '@/utils/admin-auth'
 
 const appStore = useAppStore()
 
@@ -13,9 +14,10 @@ if (savedTheme && appStore.themes[savedTheme]) {
   appStore.applyTheme(savedTheme)
 }
 
-onMounted(() => {
-  appStore.fetchTheme()
-})
+watch(adminAuthenticated, (authenticated) => {
+  if (authenticated)
+    appStore.fetchTheme()
+}, { immediate: true })
 </script>
 
 <template>

@@ -35,6 +35,13 @@ const {
 const { registerAdminAccountRoutes } = require("./admin-account-routes");
 const { registerAdminAnalyticsRoutes } = require("./admin-analytics-routes");
 const { createAdminAccountAccess } = require("./admin-account-access");
+const {
+  allowAdminSocketRequest,
+  createAdminSocketAuth,
+  registerAuthGate,
+  registerDocumentAuthGate,
+  rejectCrossOriginMutation,
+} = require("./admin-access-gate");
 const { registerAdminAuthRoutes } = require("./admin-auth-routes");
 const { registerAdminBagRoutes } = require("./admin-bag-routes");
 const { registerAdminCareerRoutes } = require("./admin-career-routes");
@@ -60,7 +67,9 @@ const { registerAdminNapcatLoginRoutes } = require("./admin-napcat-login-routes"
 const { createAdminRouteHelpers } = require("./admin-route-helpers");
 const { registerAdminSettingsRoutes } = require("./admin-settings-routes");
 const { registerAdminShopRoutes } = require("./admin-shop-routes");
-const { createAdminSessionManager } = require("./admin-session-manager");
+const {
+  createAdminSessionManager,
+} = require("./admin-session-manager");
 const { registerAdminSystemRoutes } = require("./admin-system-routes");
 const userStore = require("../models/user-store");
 
@@ -70,17 +79,6 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "http://127.0.0.1:5173",
 ];
-const PUBLIC_API_PATHS = new Set([
-  "/login",
-  "/auto-login",
-  "/qr/create",
-  "/qr/check",
-  "/game-version",
-  "/public/login-links",
-  "/changelog",
-  "/health",
-]);
-const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const ONE_MINUTE_MS = 60 * 1000;
 const LOG_SNAPSHOT_LIMIT = 100;
 const HTTP_REQUEST_TIMEOUT_MS = 120 * 1000;
@@ -127,9 +125,8 @@ function configureCorsMiddleware(expressApp) {
     const origin = req.headers.origin;
     if (origin && allowedOrigins.includes(origin)) {
       res.header("Access-Control-Allow-Origin", origin);
-    } else if (!origin) {
-      res.header("Access-Control-Allow-Origin", "*");
     }
+    res.vary("Origin");
     res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS, PUT");
     res.header(
       "Access-Control-Allow-Headers",
@@ -151,24 +148,6 @@ function configureStaticAssets(expressApp, webDist) {
   expressApp.get("/", (req, res) =>
     res.send("web build not found. Please build the web project."),
   );
-}
-
-function registerAuthGate(expressApp, requireAdminToken) {
-  expressApp.use("/api", (req, res, next) => {
-    if (
-      PUBLIC_API_PATHS.has(req.path)
-      || req.path.startsWith("/public/capture-certificate/")
-    ) return next();
-    return requireAdminToken(req, res, next);
-  });
-}
-
-function registerLogoutRoute(expressApp, invalidateAdminSessionAndDisconnect) {
-  expressApp.post("/api/logout", (req, res) => {
-    const token = req.adminToken;
-    if (token) invalidateAdminSessionAndDisconnect(token);
-    res.json({ ok: true });
-  });
 }
 
 function registerHealthRoute(expressApp) {
@@ -276,18 +255,6 @@ function hasElevatedAdminRole(session) {
   return session.role === "admin" || session.role === "super_admin";
 }
 
-function getSocketHandshakeToken(socket) {
-  const authToken =
-    socket.handshake.auth && socket.handshake.auth.token
-      ? String(socket.handshake.auth.token)
-      : "";
-  const headerToken =
-    socket.handshake.headers && socket.handshake.headers["x-admin-token"]
-      ? String(socket.handshake.headers["x-admin-token"])
-      : "";
-  return authToken || headerToken;
-}
-
 /**
  * 启动嵌入本进程的抓包服务核心。
  * 需要 CA 生成与 proto 加载，均在后台上完成（core.ready）。
@@ -342,7 +309,10 @@ function startAdminServer(dataProvider) {
   if (app) return;
   provider = dataProvider;
   app = express();
-  app.set("trust proxy", true);
+  // Explicitly configure trusted remote proxies instead of trusting every client.
+  app.set("trust proxy", process.env.ADMIN_TRUST_PROXY || "loopback");
+  app.disable("x-powered-by");
+  app.use("/api", rejectCrossOriginMutation);
   app.use(express.json({ limit: "256kb" }));
 
   const adminSessionManager = createAdminSessionManager({
@@ -355,9 +325,7 @@ function startAdminServer(dataProvider) {
     getSession: getAdminSession,
     hasToken: hasAdminToken,
     invalidateAdminSessionAndDisconnect,
-    invalidateAdminSessions,
     requireAdminToken,
-    updateAdminSessions,
   } = adminSessionManager;
 
   const adminAccountAccess = createAdminAccountAccess({
@@ -388,6 +356,8 @@ function startAdminServer(dataProvider) {
 
   const webDist = path.join(__dirname, "../../../web/dist");
   configureCorsMiddleware(app);
+  registerAuthGate(app, requireAdminToken);
+  registerDocumentAuthGate(app, hasAdminToken);
   configureStaticAssets(app, webDist);
   app.use("/game-config", express.static(getResourcePath("gameConfig")));
   const loginAssetsDir = getDataFile("login-assets");
@@ -408,7 +378,7 @@ function startAdminServer(dataProvider) {
     }),
   );
   app.use("/login-assets", (req, res) => res.sendStatus(404));
-  adminScheduler.setIntervalTask("session_cleanup", FIVE_MINUTES_MS, cleanupInvalidAdminSessions, {
+  adminScheduler.setIntervalTask("session_cleanup", ONE_MINUTE_MS, cleanupInvalidAdminSessions, {
     preventOverlap: true,
   });
 
@@ -418,10 +388,9 @@ function startAdminServer(dataProvider) {
     userStore,
     requireAdminToken,
     createAdminSession,
-    updateAdminSessions,
+    invalidateAdminSessionAndDisconnect,
   });
   registerHealthRoute(app);
-  registerAuthGate(app, requireAdminToken);
   registerRequestTimeoutGuard(app);
   registerAdminPublicInfoRoutes({
     app,
@@ -432,7 +401,6 @@ function startAdminServer(dataProvider) {
     canAccessAccount,
     sendProviderError,
   });
-  registerLogoutRoute(app, invalidateAdminSessionAndDisconnect);
 
   registerAdminFarmResourceRoutes({
     app,
@@ -692,21 +660,15 @@ function startAdminServer(dataProvider) {
     pingTimeout: 10000,
     connectTimeout: 10000,
     maxHttpBufferSize: 256 * 1024,
+    allowRequest: allowAdminSocketRequest,
     cors: {
-      origin: "*",
+      origin: CONFIG.ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS,
+      credentials: true,
       methods: ["GET", "POST"],
       allowedHeaders: ["x-admin-token", "x-account-id"],
     },
   });
-  io.use((socket, next) => {
-    const token = getSocketHandshakeToken(socket);
-    if (!token || !hasAdminToken(token)) {
-      return next(new Error("Unauthorized"));
-    }
-    socket.data.adminToken = token;
-    socket.data.user = getAdminSession(token);
-    return next();
-  });
+  io.use(createAdminSocketAuth(getAdminSession));
   io.on("connection", (socket) => {
     const initialAccountId =
       (socket.handshake.auth && socket.handshake.auth.accountId) ||
@@ -715,6 +677,7 @@ function startAdminServer(dataProvider) {
     subscribeSocketToAccount(socket, initialAccountId);
     socket.emit("ready", { ok: true, ts: Date.now() });
     socket.on("subscribe", (payload) => {
+      if (!hasAdminToken(socket.data.adminToken)) return;
       const safePayload = payload && typeof payload === "object" ? payload : {};
       subscribeSocketToAccount(socket, safePayload.accountId || "");
     });

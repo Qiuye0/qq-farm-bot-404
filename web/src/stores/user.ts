@@ -1,7 +1,7 @@
-import { useStorage } from '@vueuse/core'
 import { defineStore } from 'pinia'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import api from '@/api'
+import { adminAuthenticated } from '@/utils/admin-auth'
 
 interface AdminUser {
   username: 'admin'
@@ -12,9 +12,8 @@ interface AdminUser {
 }
 
 export const useUserStore = defineStore('user', () => {
-  const token = useStorage('admin_token', '')
-  const userInfo = useStorage<AdminUser | null>('user_info', null)
-  const isLoggedIn = computed(() => !!token.value)
+  const userInfo = ref<AdminUser | null>(null)
+  const isLoggedIn = computed(() => adminAuthenticated.value)
   const isAdmin = computed(() => true)
   const isSuperAdmin = computed(() => false)
   const username = computed(() => 'admin')
@@ -42,7 +41,6 @@ export const useUserStore = defineStore('user', () => {
   }
 
   return {
-    token,
     userInfo,
     isLoggedIn,
     isAdmin,
