@@ -121,6 +121,21 @@ function registerAdminBagRoutes({
     }
   });
 
+  app.post('/api/bag/lock', async (req, res) => {
+    const accountId = requireAccessibleAccount(req, res, getAccountIdFromRequest, canAccessAccount);
+    if (!accountId) return;
+    const { itemUids, locked } = req.body || {};
+    if (typeof locked !== 'boolean' || !Array.isArray(itemUids) || itemUids.length === 0
+      || itemUids.some(uid => !Number.isSafeInteger(uid) || uid <= 0))
+      return res.status(400).json({ ok: false, error: '请提供有效的 itemUids 和 locked' });
+    try {
+      const result = await provider.setItemsLocked(accountId, itemUids, locked);
+      res.json({ ok: true, data: result });
+    } catch (error) {
+      sendProviderError(res, error);
+    }
+  });
+
   app.post("/api/bag/use", async (req, res) => {
     const accountId = requireAccessibleAccount(req, res, getAccountIdFromRequest, canAccessAccount);
     if (!accountId)

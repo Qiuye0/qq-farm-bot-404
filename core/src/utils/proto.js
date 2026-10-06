@@ -104,6 +104,8 @@ async function loadProto() {
     // 背包/仓库
     types.BagRequest = root.lookupType('gamepb.itempb.BagRequest');
     types.BagReply = root.lookupType('gamepb.itempb.BagReply');
+    for (const name of ['LockItemsRequest', 'LockItemsReply', 'UnlockItemsRequest', 'UnlockItemsReply'])
+        types[name] = root.lookupType(`gamepb.itempb.${name}`);
     types.SellRequest = root.lookupType('gamepb.itempb.SellRequest');
     types.SellReply = root.lookupType('gamepb.itempb.SellReply');
     types.UseRequest = root.lookupType('gamepb.itempb.UseRequest');

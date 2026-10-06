@@ -22,8 +22,6 @@ const {
     getAvailableSeeds,
     runFarmOperation,
     runFertilizerByConfig,
-    ORGANIC_FERTILIZER_ID,
-    fertilize,
     removePlant
 } = require('../services/farm');
 const {
@@ -1767,6 +1765,9 @@ async function handleApiCall(msg) {
                 result = await useItem(itemId, count, uid);
                 break;
             }
+            case 'setItemsLocked':
+                result = await require('../services/warehouse').setItemsLocked(args[0], args[1]);
+                break;
             case 'sellItems': {
                 const { sellItems } = require('../services/warehouse');
                 const items = Array.isArray(args[0]) ? args[0] : [];
@@ -2031,26 +2032,8 @@ async function handleApiCall(msg) {
                 result = { ...getSchedulerRegistrySnapshot(), resources: resourceMonitor.snapshot() };
                 break;
             case 'fertilizeLand': {
-                const landId = Number(args[0]) || 0;
-                if (!landId) {
-                    error = '无效的土地ID';
-                } else {
-                    log('施肥', `正在对土地 ${  landId  } 使用有机肥料催熟`, {
-                        module: 'farm', event: '催熟', landId
-                    });
-                    const fertilizeCount = await fertilize([landId], ORGANIC_FERTILIZER_ID);
-                    if (fertilizeCount > 0) {
-                        log('施肥', `土地 ${  landId  } 催熟成功`, {
-                            module: 'farm', event: '催熟', result: 'ok', landId
-                        });
-                        result = { success: true, count: fertilizeCount };
-                    } else {
-                        log('施肥', `土地 ${  landId  } 催熟失败，可能有机肥料不足`, {
-                            module: 'farm', event: '催熟', result: 'error', landId
-                        });
-                        result = { success: false, count: 0 };
-                    }
-                }
+                const { fertilizeOwnLand } = require('../services/farm-manual-fertilizer');
+                result = await fertilizeOwnLand(args[0], args[1]);
                 break;
             }
             case 'removePlant': {

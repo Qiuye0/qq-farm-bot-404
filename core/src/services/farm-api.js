@@ -1,6 +1,6 @@
 const { sendMsgAsync, getUserState } = require('../utils/network');
 const { types, waitForProtoReady } = require('../utils/proto');
-const { toLong, sleep, log } = require('../utils/utils');
+const { toLong, sleep } = require('../utils/utils');
 
 /** 普通化肥 ID */
 const NORMAL_FERTILIZER_ID = 1011;
@@ -73,6 +73,16 @@ async function weedOut(landIds) {
 async function insecticide(landIds) {
   const userState = getUserState();
   return sendPlantRequest(types.InsecticideRequest, types.InsecticideReply, 'Insecticide', landIds, userState.gid);
+}
+
+/** 单次施肥，返回服务端权威土地与肥料库存快照。 */
+async function fertilizeOne(landId, fertilizerId = NORMAL_FERTILIZER_ID) {
+  const payload = types.FertilizeRequest.encode(types.FertilizeRequest.create({
+    land_ids: [toLong(landId)],
+    fertilizer_id: toLong(fertilizerId)
+  })).finish();
+  const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Fertilize', payload);
+  return types.FertilizeReply.decode(body);
 }
 
 /**
@@ -186,6 +196,7 @@ module.exports = {
   weedOut,
   insecticide,
   fertilize,
+  fertilizeOne,
   removePlant,
   upgradeLand,
   unlockLand,

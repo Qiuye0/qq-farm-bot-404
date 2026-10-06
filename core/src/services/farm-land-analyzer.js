@@ -457,147 +457,152 @@ function getQixiDewStatus(plant) {
   };
 }
 
-async function getLandsDetail() {
-  try {
-    const landsReply = await getAllLands();
-    const result = { lands: [], summary: {} };
-    if (!landsReply.lands) return result;
+function buildLandDetails(landsReply) {
+  const result = { lands: [], summary: {} };
+  if (!landsReply.lands) return result;
 
-    const serverTime = getServerTimeSec();
-    const details = [];
-    const landMap = buildLandMap(landsReply.lands);
+  const serverTime = getServerTimeSec();
+  const details = [];
+  const landMap = buildLandMap(landsReply.lands);
 
-    for (const land of landsReply.lands) {
-      const landId = toNum(land.id);
-      const level = toNum(land.level);
-      const maxLevel = toNum(land.max_level);
-      const landsLevel = toNum(land.lands_level);
-      const landSize = toNum(land.land_size);
-      const landType = getLandTypeByLevel(level);
-      const landTypeName = getLandTypeNameByLevel(level);
-      const couldUnlock = !!land.could_unlock;
-      const couldUpgrade = !!land.could_upgrade;
+  for (const land of landsReply.lands) {
+    const landId = toNum(land.id);
+    const level = toNum(land.level);
+    const maxLevel = toNum(land.max_level);
+    const landsLevel = toNum(land.lands_level);
+    const landSize = toNum(land.land_size);
+    const landType = getLandTypeByLevel(level);
+    const landTypeName = getLandTypeNameByLevel(level);
+    const couldUnlock = !!land.could_unlock;
+    const couldUpgrade = !!land.could_upgrade;
 
-      const { sourceLand, occupiedByMaster, masterLandId, occupiedLandIds } =
-        getDisplayLandContext(land, landMap);
+    const { sourceLand, occupiedByMaster, masterLandId, occupiedLandIds } =
+      getDisplayLandContext(land, landMap);
 
-      // 合种作物只展示主土地；从属土地的信息已经合并到主土地卡片。
-      if (occupiedByMaster) continue;
+    // 合种作物只展示主土地；从属土地的信息已经合并到主土地卡片。
+    if (occupiedByMaster) continue;
 
-      // 未解锁
-      if (!land.unlocked) {
-        details.push({
-          id: landId, unlocked: false, status: 'locked',
-          plantName: '', phaseName: '',
-          level, maxLevel, landsLevel, landSize, landType, landTypeName,
-          couldUnlock, couldUpgrade,
-          currentSeason: 0, totalSeason: 0,
-          occupiedByMaster: false, masterLandId: 0,
-          occupiedLandIds: [], plantSize: 1
-        });
-        continue;
-      }
-
-      const plant = sourceLand && sourceLand.plant;
-
-      // 空地
-      if (!plant || !plant.phases || plant.phases.length === 0) {
-        details.push({
-          id: landId, unlocked: true, status: 'empty',
-          plantName: '', phaseName: '空地',
-          level, maxLevel, landsLevel, landSize, landType, landTypeName,
-          couldUnlock, couldUpgrade,
-          currentSeason: 0, totalSeason: 0,
-          occupiedByMaster, masterLandId, occupiedLandIds, plantSize: 1
-        });
-        continue;
-      }
-
-      const currentPhase = getCurrentPhase(plant.phases, false, '', plant.id);
-      if (!currentPhase) {
-        details.push({
-          id: landId, unlocked: true, status: 'empty',
-          plantName: '', phaseName: '',
-          level, maxLevel, landsLevel, landSize, landType, landTypeName,
-          couldUnlock, couldUpgrade,
-          currentSeason: 0, totalSeason: 0,
-          occupiedByMaster, masterLandId, occupiedLandIds, plantSize: 1
-        });
-        continue;
-      }
-
-      const phase = toNum(currentPhase.phase);
-      const plantId = toNum(plant.id);
-      const mutantConfigIds = getPlantMutantConfigIds(plant, currentPhase);
-      const displayPlantId = getMutantDisplayPlantId(plantId, mutantConfigIds);
-      const displayName = getPlantName(displayPlantId) || getPlantName(plantId) || plant.name || '未知';
-      const plantInfo = getPlantById(plantId);
-      const seedId = toNum(plantInfo && plantInfo.seed_id);
-      const seedImage = seedId > 0 ? getSeedImageBySeedId(seedId) : '';
-      const occupiedPlantSize = occupiedLandIds.length > 1
-        ? Math.round(Math.sqrt(occupiedLandIds.length))
-        : 1;
-      const plantSize = Math.max(
-        1,
-        toNum(plantInfo && plantInfo.size) || 1,
-        occupiedPlantSize
-      );
-      const plantImage = getMutantPlantImageByPhase(plantId, mutantConfigIds, toNum(currentPhase.image_phase));
-      const totalSeason = Math.max(1, toNum(plantInfo && plantInfo.seasons) || 1);
-      const rawSeason = toNum(plant.season);
-      const currentSeason = rawSeason > 0 ? Math.min(rawSeason, totalSeason) : 1;
-      const phaseName = currentPhase.phaseName || PHASE_NAMES[phase] || '';
-
-      // 计算剩余成熟时间
-      const maturePhaseData = Array.isArray(plant.phases)
-        ? plant.phases
-          .filter(p => p && toTimeSec(p.begin_time) > 0)
-          .sort((left, right) => toTimeSec(right.begin_time) - toTimeSec(left.begin_time))[0]
-        : null;
-      const matureTime = maturePhaseData ? toTimeSec(maturePhaseData.begin_time) : 0;
-      const matureInSec = matureTime > serverTime ? matureTime - serverTime : 0;
-      const totalGrowTime = getPlantGrowTime(plantId);
-      const phaseStartTime = toTimeSec(currentPhase.begin_time);
-      const nextPhaseData = Array.isArray(plant.phases)
-        ? plant.phases
-          .filter(item => item && toTimeSec(item.begin_time) > phaseStartTime)
-          .sort((left, right) => toTimeSec(left.begin_time) - toTimeSec(right.begin_time))[0]
-        : null;
-      const phaseEndTime = nextPhaseData ? toTimeSec(nextPhaseData.begin_time) : 0;
-
-      // 确定状态
-      let status = 'growing';
-      if (phase === PlantPhase.MATURE) status = 'harvestable';
-      else if (phase === PlantPhase.DEAD) status = 'dead';
-      else if (phase === PlantPhase.UNKNOWN || !plant.phases.length) status = 'empty';
-
-      // 是否需要浇水/除草/除虫
-      const needWater = toNum(plant.dry_num) > 0 ||
-        (toTimeSec(currentPhase.dry_time) > 0 && toTimeSec(currentPhase.dry_time) <= serverTime);
-      const needWeed = (plant.weed_owners && plant.weed_owners.length > 0) ||
-        (toTimeSec(currentPhase.weeds_time) > 0 && toTimeSec(currentPhase.weeds_time) <= serverTime);
-      const needBug = (plant.insect_owners && plant.insect_owners.length > 0) ||
-        (toTimeSec(currentPhase.insect_time) > 0 && toTimeSec(currentPhase.insect_time) <= serverTime);
-
-      // 变异效果
-      const mutantEffects = getMutantEffectsByIds(mutantConfigIds);
-      const qixiDew = getQixiDewStatus(plant);
-
+    // 未解锁
+    if (!land.unlocked) {
       details.push({
-        id: landId, unlocked: true, status,
-        plantName: displayName, plantId, displayPlantId, seedId, seedImage, plantImage,
-        phase, imagePhase: toNum(currentPhase.image_phase), phaseName, currentSeason, totalSeason,
-        matureInSec, totalGrowTime, phaseStartTime, phaseEndTime,
-        needWater, needWeed, needBug,
-        stealable: !!plant.stealable,
+        id: landId, unlocked: false, status: 'locked',
+        plantName: '', phaseName: '',
         level, maxLevel, landsLevel, landSize, landType, landTypeName,
         couldUnlock, couldUpgrade,
-        occupiedByMaster, masterLandId, occupiedLandIds,
-        plantSize, mutantEffects, qixiDew
+        currentSeason: 0, totalSeason: 0,
+        occupiedByMaster: false, masterLandId: 0,
+        occupiedLandIds: [], plantSize: 1
       });
+      continue;
     }
 
-    return { lands: details, summary: summarizeLandDetails(details) };
+    const plant = sourceLand && sourceLand.plant;
+
+    // 空地
+    if (!plant || !plant.phases || plant.phases.length === 0) {
+      details.push({
+        id: landId, unlocked: true, status: 'empty',
+        plantName: '', phaseName: '空地',
+        level, maxLevel, landsLevel, landSize, landType, landTypeName,
+        couldUnlock, couldUpgrade,
+        currentSeason: 0, totalSeason: 0,
+        occupiedByMaster, masterLandId, occupiedLandIds, plantSize: 1
+      });
+      continue;
+    }
+
+    const currentPhase = getCurrentPhase(plant.phases, false, '', plant.id);
+    if (!currentPhase) {
+      details.push({
+        id: landId, unlocked: true, status: 'empty',
+        plantName: '', phaseName: '',
+        level, maxLevel, landsLevel, landSize, landType, landTypeName,
+        couldUnlock, couldUpgrade,
+        currentSeason: 0, totalSeason: 0,
+        occupiedByMaster, masterLandId, occupiedLandIds, plantSize: 1
+      });
+      continue;
+    }
+
+    const phase = toNum(currentPhase.phase);
+    const plantId = toNum(plant.id);
+    const mutantConfigIds = getPlantMutantConfigIds(plant, currentPhase);
+    const displayPlantId = getMutantDisplayPlantId(plantId, mutantConfigIds);
+    const displayName = getPlantName(displayPlantId) || getPlantName(plantId) || plant.name || '未知';
+    const plantInfo = getPlantById(plantId);
+    const seedId = toNum(plantInfo && plantInfo.seed_id);
+    const seedImage = seedId > 0 ? getSeedImageBySeedId(seedId) : '';
+    const occupiedPlantSize = occupiedLandIds.length > 1
+      ? Math.round(Math.sqrt(occupiedLandIds.length))
+      : 1;
+    const plantSize = Math.max(
+      1,
+      toNum(plantInfo && plantInfo.size) || 1,
+      occupiedPlantSize
+    );
+    const plantImage = getMutantPlantImageByPhase(plantId, mutantConfigIds, toNum(currentPhase.image_phase));
+    const totalSeason = Math.max(1, toNum(plantInfo && plantInfo.seasons) || 1);
+    const rawSeason = toNum(plant.season);
+    const currentSeason = rawSeason > 0 ? Math.min(rawSeason, totalSeason) : 1;
+    const phaseName = currentPhase.phaseName || PHASE_NAMES[phase] || '';
+
+    // 计算剩余成熟时间
+    const maturePhaseData = Array.isArray(plant.phases)
+      ? plant.phases
+        .filter(p => p && toTimeSec(p.begin_time) > 0)
+        .sort((left, right) => toTimeSec(right.begin_time) - toTimeSec(left.begin_time))[0]
+      : null;
+    const matureTime = maturePhaseData ? toTimeSec(maturePhaseData.begin_time) : 0;
+    const matureInSec = matureTime > serverTime ? matureTime - serverTime : 0;
+    const totalGrowTime = getPlantGrowTime(plantId);
+    const phaseStartTime = toTimeSec(currentPhase.begin_time);
+    const nextPhaseData = Array.isArray(plant.phases)
+      ? plant.phases
+        .filter(item => item && toTimeSec(item.begin_time) > phaseStartTime)
+        .sort((left, right) => toTimeSec(left.begin_time) - toTimeSec(right.begin_time))[0]
+      : null;
+    const phaseEndTime = nextPhaseData ? toTimeSec(nextPhaseData.begin_time) : 0;
+
+    // 确定状态
+    let status = 'growing';
+    if (phase === PlantPhase.MATURE) status = 'harvestable';
+    else if (phase === PlantPhase.DEAD) status = 'dead';
+    else if (phase === PlantPhase.UNKNOWN || !plant.phases.length) status = 'empty';
+
+    // 是否需要浇水/除草/除虫
+    const needWater = toNum(plant.dry_num) > 0 ||
+      (toTimeSec(currentPhase.dry_time) > 0 && toTimeSec(currentPhase.dry_time) <= serverTime);
+    const needWeed = (plant.weed_owners && plant.weed_owners.length > 0) ||
+      (toTimeSec(currentPhase.weeds_time) > 0 && toTimeSec(currentPhase.weeds_time) <= serverTime);
+    const needBug = (plant.insect_owners && plant.insect_owners.length > 0) ||
+      (toTimeSec(currentPhase.insect_time) > 0 && toTimeSec(currentPhase.insect_time) <= serverTime);
+
+    // 变异效果
+    const mutantEffects = getMutantEffectsByIds(mutantConfigIds);
+    const qixiDew = getQixiDewStatus(plant);
+
+    details.push({
+      id: landId, unlocked: true, status,
+      plantName: displayName, plantId, displayPlantId, seedId, seedImage, plantImage,
+      phase, imagePhase: toNum(currentPhase.image_phase), phaseName, currentSeason, totalSeason,
+      matureInSec, totalGrowTime, phaseStartTime, phaseEndTime,
+      needWater, needWeed, needBug,
+      leftInorcFertTimes: Object.hasOwn(plant, 'left_inorc_fert_times')
+        ? Math.max(0, toNum(plant.left_inorc_fert_times)) : null,
+      stealable: !!plant.stealable,
+      level, maxLevel, landsLevel, landSize, landType, landTypeName,
+      couldUnlock, couldUpgrade,
+      occupiedByMaster, masterLandId, occupiedLandIds,
+      plantSize, mutantEffects, qixiDew
+    });
+  }
+
+  return { lands: details, summary: summarizeLandDetails(details) };
+}
+
+async function getLandsDetail() {
+  try {
+    return buildLandDetails(await getAllLands());
   } catch {
     return { lands: [], summary: {} };
   }
@@ -613,5 +618,6 @@ module.exports = {
   analyzeLands,
   resolveRemovableHarvestedLands,
   getQixiDewStatus,
-  getLandsDetail
+  getLandsDetail,
+  buildLandDetails
 };

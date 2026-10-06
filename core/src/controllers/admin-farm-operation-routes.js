@@ -67,7 +67,12 @@ function registerAdminFarmOperationRoutes({
       const landId = requireLandId(req, res);
       if (!landId) return;
 
-      const data = await provider.fertilizeLand(accountId, landId);
+      const fertilizerType = req.body?.fertilizerType ?? 'organic';
+      if (fertilizerType !== 'normal' && fertilizerType !== 'organic') {
+        res.status(400).json({ ok: false, error: '化肥类型必须是 normal 或 organic' });
+        return;
+      }
+      const data = await provider.fertilizeLand(accountId, landId, fertilizerType);
       res.json({ ok: true, data });
     } catch (error) {
       sendProviderError(res, error);

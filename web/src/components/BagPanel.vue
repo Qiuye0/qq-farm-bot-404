@@ -7,6 +7,7 @@ import { useAccountStore } from '@/stores/account'
 import { useBagStore } from '@/stores/bag'
 import { useStatusStore } from '@/stores/status'
 import { useToastStore } from '@/stores/toast'
+import { getSeedLockUids, isBagItemLocked } from '@/utils/bag-lock'
 import { formatCurrencyAmountByLabel, formatGoldAmount, formatGoldBeanAmount } from '@/utils/number-format'
 
 const accountStore = useAccountStore()
@@ -82,6 +83,9 @@ const confirmModal = ref({
   selectedItems: [] as any[],
 })
 
+const confirmationAccountId = ref('')
+const operationPending = ref(false)
+const batchAction = ref<'sell' | 'lock' | 'unlock'>('sell')
 const batchMode = ref(false)
 const selectedForBatch = ref<Set<number>>(new Set())
 const batchSellResult = ref<{ gold: number, goldBean: number } | null>(null)
@@ -101,7 +105,7 @@ function getPriceClass(item: any) {
 
 function canSell(item: any) {
   const itemType = Number(item?.itemType || 0)
-  return Boolean(item?.sellable) || itemType === 17 || itemType === 6
+  return !item?.locked && (Boolean(item?.sellable) || itemType === 17 || itemType === 6)
 }
 
 function canBatchSell(item: any) {
@@ -109,10 +113,56 @@ function canBatchSell(item: any) {
 }
 
 function canUse(item: any) {
-  return Boolean(item?.usable) || itemType(item) === 11 || Number(item?.id) === 6001
+  return !item?.locked && (Boolean(item?.usable) || itemType(item) === 11 || Number(item?.id) === 6001)
+}
+
+function canChangeSeedLock(item: any, locked: boolean) {
+  return getItemCategory(item) === 'seed'
+    && getSeedLockUids(originalItems.value, [Number(item.id)], locked).length > 0
+}
+
+function canSelectForBatch(item: any) {
+  return batchAction.value === 'sell' ? canBatchSell(item) : canChangeSeedLock(item, batchAction.value === 'lock')
+}
+
+async function handleSeedLockClick(locked: boolean, item?: any) {
+  const accountId = currentAccountId.value
+  if (operationPending.value || bagLoading.value || !accountId)
+    return
+  const seeds = item ? [item] : filteredItems.value.filter(seed => selectedForBatch.value.has(Number(seed.id)))
+  const eligible = seeds.filter(seed => canChangeSeedLock(seed, locked))
+  const uids = getSeedLockUids(originalItems.value, eligible.map(seed => Number(seed.id)), locked)
+  if (!uids.length) {
+    toastStore.warning('请先选择可操作的种子')
+    return
+  }
+  operationPending.value = true
+  try {
+    const res = await bagStore.setItemsLocked(accountId, uids, locked)
+    if (currentAccountId.value !== accountId)
+      return
+    if (!res.ok) {
+      toastStore.error(res.error || '操作失败')
+      return
+    }
+    toastStore.success(`已${locked ? '上锁' : '解锁'} ${res.data?.changed ?? uids.length} 项种子库存`)
+    selectedForBatch.value.clear()
+    batchMode.value = false
+    await bagStore.fetchBag(accountId, true)
+  }
+  catch (error: any) {
+    if (currentAccountId.value === accountId)
+      toastStore.error(`操作失败: ${error.message || '未知错误'}`)
+  }
+  finally {
+    operationPending.value = false
+  }
 }
 
 function handleSellClick(item: any) {
+  if (operationPending.value)
+    return
+  confirmationAccountId.value = currentAccountId.value
   if (batchMode.value) {
     const isSelected = selectedForBatch.value.has(Number(item.id))
     if (isSelected) {
@@ -145,6 +195,9 @@ function handleSellClick(item: any) {
 }
 
 function handleUseClick(item: any) {
+  if (operationPending.value)
+    return
+  confirmationAccountId.value = currentAccountId.value
   const count = Number(item.id) === 6001 ? 1 : Number(item.count || 1)
   confirmModal.value = {
     show: true,
@@ -160,14 +213,16 @@ function handleUseClick(item: any) {
 
 async function handleConfirm() {
   const { action, item, selectedItems } = confirmModal.value
-  if (!currentAccountId.value)
+  const accountId = confirmationAccountId.value
+  if (!accountId || accountId !== currentAccountId.value || operationPending.value)
     return
 
+  operationPending.value = true
   confirmModal.value.loading = true
   try {
     if (action === 'sell' && item) {
       const sellItems = originalItems.value
-        .filter((it: any) => Number(it.id) === Number(item.id))
+        .filter((it: any) => !isBagItemLocked(it) && Number(it.id) === Number(item.id))
         .map((it: any) => ({ id: it.id, count: it.count, uid: it.uid || 0 }))
 
       if (sellItems.length === 0) {
@@ -175,10 +230,10 @@ async function handleConfirm() {
         return
       }
 
-      const res = await bagStore.sellItems(currentAccountId.value, sellItems)
+      const res = await bagStore.sellItems(accountId, sellItems)
       if (res.ok) {
         toastStore.success(`已出售 ${item.name || `物品${item.id}`}`)
-        await loadBag()
+        await bagStore.fetchBag(accountId)
       }
       else {
         toastStore.error(`出售失败: ${res.error || '未知错误'}`)
@@ -186,7 +241,7 @@ async function handleConfirm() {
     }
     else if (action === 'batchSell' && selectedItems) {
       const itemsToSell = originalItems.value
-        .filter((it: any) => selectedItems.some((si: any) => Number(si.id) === Number(it.id)))
+        .filter((it: any) => !isBagItemLocked(it) && selectedItems.some((si: any) => Number(si.id) === Number(it.id)))
         .map((it: any) => ({ id: it.id, count: it.count, uid: it.uid || 0 }))
 
       if (itemsToSell.length === 0) {
@@ -194,7 +249,7 @@ async function handleConfirm() {
         return
       }
 
-      const res = await bagStore.sellItems(currentAccountId.value, itemsToSell)
+      const res = await bagStore.sellItems(accountId, itemsToSell)
       if (res.ok) {
         let totalGold = 0
         let totalGoldBean = 0
@@ -216,7 +271,7 @@ async function handleConfirm() {
         toastStore.success(`已批量出售 ${selectedItems.length} 种物品，获得 ${formatGoldAmount(totalGold)} 金币, ${formatGoldBeanAmount(totalGoldBean)} 金豆豆`)
         selectedForBatch.value.clear()
         batchMode.value = false
-        await loadBag()
+        await bagStore.fetchBag(accountId)
       }
       else {
         toastStore.error(`批量出售失败: ${res.error || '未知错误'}`)
@@ -225,14 +280,14 @@ async function handleConfirm() {
     else if (action === 'use' && item) {
       const sourceItem = originalItems.value.find((it: any) => Number(it.id) === Number(item.id))
       const res = await bagStore.useItem(
-        currentAccountId.value,
+        accountId,
         Number(item.id),
         Number(item.id) === 6001 ? 1 : Number(item.count || 1),
         Number(sourceItem?.uid || 0),
       )
       if (res.ok) {
         toastStore.success(res.data?.message || `已使用 ${item.name || `物品${item.id}`}`)
-        await loadBag()
+        await bagStore.fetchBag(accountId)
       }
       else {
         toastStore.error(`使用失败: ${res.error || '未知错误'}`)
@@ -243,6 +298,7 @@ async function handleConfirm() {
     toastStore.error(`操作失败: ${e.message || '未知错误'}`)
   }
   finally {
+    operationPending.value = false
     confirmModal.value.loading = false
     confirmModal.value.show = false
   }
@@ -252,8 +308,10 @@ function handleCancel() {
   confirmModal.value.show = false
 }
 
-function toggleBatchMode() {
-  batchMode.value = !batchMode.value
+function toggleBatchMode(action: 'sell' | 'lock' | 'unlock' = 'sell') {
+  batchMode.value = !batchMode.value || batchAction.value !== action
+  batchAction.value = action
+  selectedForBatch.value.clear()
   if (!batchMode.value) {
     selectedForBatch.value.clear()
     batchSellResult.value = null
@@ -263,13 +321,14 @@ function toggleBatchMode() {
 function selectAllSellable() {
   selectedForBatch.value.clear()
   for (const item of filteredItems.value) {
-    if (canBatchSell(item)) {
+    if (canSelectForBatch(item)) {
       selectedForBatch.value.add(Number(item.id))
     }
   }
 }
 
 function handleBatchSellClick() {
+  confirmationAccountId.value = currentAccountId.value
   const sellableItems = filteredItems.value.filter((item: any) => canBatchSell(item))
   if (sellableItems.length === 0) {
     toastStore.warning('没有可批量出售的物品')
@@ -352,12 +411,21 @@ const showInitialLoading = computed(() =>
 
 watch(currentAccountId, (newId, oldId) => {
   if (oldId !== undefined && newId !== oldId) {
+    confirmationAccountId.value = ''
+    confirmModal.value.show = false
+    selectedForBatch.value.clear()
+    batchMode.value = false
     bagLoaded.value = false
     bagStore.clearBag()
     statusStore.clearAccountScopedData()
   }
   loadBag()
 }, { immediate: true })
+
+watch(selectedCategory, () => {
+  batchMode.value = false
+  selectedForBatch.value.clear()
+})
 
 watch(() => currentAccount.value?.running, () => {
   loadBag()
@@ -431,32 +499,38 @@ useIntervalFn(loadBag, 60000)
         <template v-if="selectedCategory === 'fruit' || selectedCategory === 'all'">
           <button
             class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
-            :class="batchMode
+            :class="batchMode && batchAction === 'sell'
               ? 'bg-orange-500 text-white dark:bg-orange-600'
               : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'"
-            @click="toggleBatchMode"
+            @click="toggleBatchMode('sell')"
           >
-            <div v-if="batchMode" class="i-carbon-close mr-1 inline-block" />
-            {{ batchMode ? '取消批量' : '批量出售' }}
+            <div v-if="batchMode && batchAction === 'sell'" class="i-carbon-close mr-1 inline-block" />
+            {{ batchMode && batchAction === 'sell' ? '取消批量' : '批量出售' }}
           </button>
-          <template v-if="batchMode">
-            <button
-              class="rounded-lg bg-blue-500 px-3 py-1.5 text-sm text-white font-medium transition dark:bg-blue-600 hover:bg-blue-600 dark:hover:bg-blue-700"
-              @click="selectAllSellable"
-            >
-              全选
-            </button>
-            <button
-              class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
-              :class="selectedSellableCount > 0
-                ? 'bg-red-500 text-white hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700'
-                : 'bg-gray-100 text-gray-400 dark:bg-gray-700 dark:text-gray-500'"
-              :disabled="selectedSellableCount === 0"
-              @click="handleBatchSellClick"
-            >
-              出售 ({{ selectedSellableCount }})
-            </button>
-          </template>
+        </template>
+        <template v-if="selectedCategory === 'seed' || selectedCategory === 'all'">
+          <button
+            v-for="mode in (['lock', 'unlock'] as const)"
+            :key="mode"
+            class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
+            :class="batchMode && batchAction === mode ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300'"
+            :disabled="operationPending"
+            @click="toggleBatchMode(mode)"
+          >
+            {{ batchMode && batchAction === mode ? '取消批量' : mode === 'lock' ? '批量上锁' : '批量解锁' }}
+          </button>
+        </template>
+        <template v-if="batchMode">
+          <button class="rounded-lg bg-blue-500 px-3 py-1.5 text-sm text-white" :disabled="operationPending" @click="selectAllSellable">
+            全选
+          </button>
+          <button
+            class="rounded-lg bg-blue-500 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+            :disabled="selectedSellableCount === 0 || operationPending"
+            @click="batchAction === 'sell' ? handleBatchSellClick() : handleSeedLockClick(batchAction === 'lock')"
+          >
+            {{ batchAction === 'sell' ? '出售' : batchAction === 'lock' ? '上锁' : '解锁' }} ({{ selectedSellableCount }})
+          </button>
         </template>
       </div>
 
@@ -467,9 +541,9 @@ useIntervalFn(loadBag, 60000)
           class="group relative flex flex-col items-center border rounded-lg bg-white p-3 transition dark:border-gray-700 dark:bg-gray-800 hover:shadow-md"
           :class="{
             'ring-2 ring-orange-500 dark:ring-orange-400': batchMode && selectedForBatch.has(Number(item.id)),
-            'opacity-50': batchMode && canBatchSell(item) && !selectedForBatch.has(Number(item.id)),
+            'opacity-50': batchMode && canSelectForBatch(item) && !selectedForBatch.has(Number(item.id)),
           }"
-          @click="batchMode && canBatchSell(item) && handleSellClick(item)"
+          @click="batchMode && canSelectForBatch(item) && handleSellClick(item)"
         >
           <div class="absolute left-2 top-2 text-xs text-gray-400 font-mono">
             #{{ item.id }}
@@ -477,6 +551,16 @@ useIntervalFn(loadBag, 60000)
 
           <div class="absolute right-1 top-1 flex gap-1">
             <template v-if="!batchMode">
+              <button
+                v-for="locked in [true, false]"
+                v-show="canChangeSeedLock(item, locked)"
+                :key="String(locked)"
+                class="rounded bg-blue-500 px-1.5 py-0.5 text-[10px] text-white transition hover:bg-blue-600 disabled:opacity-40"
+                :disabled="operationPending || bagLoading"
+                @click.stop="handleSeedLockClick(locked, item)"
+              >
+                {{ locked ? '上锁' : '解锁' }}
+              </button>
               <button
                 v-if="canSell(item)"
                 class="rounded bg-red-500 px-1.5 py-0.5 text-[10px] text-white opacity-70 transition dark:bg-red-600 hover:opacity-100"
@@ -495,7 +579,7 @@ useIntervalFn(loadBag, 60000)
               </button>
             </template>
             <div
-              v-else-if="canBatchSell(item)"
+              v-else-if="canSelectForBatch(item)"
               class="h-5 w-5 flex items-center justify-center border-2 rounded transition"
               :class="selectedForBatch.has(Number(item.id))
                 ? 'border-orange-500 bg-orange-500 text-white'
@@ -541,6 +625,11 @@ useIntervalFn(loadBag, 60000)
               <span v-else-if="item.level > 0"> · Lv{{ item.level }}</span>
               <span v-if="item.price > 0" :class="getPriceClass(item)"> · {{ item.price }}{{ item.priceUnit || '金' }}</span>
             </span>
+          </div>
+
+          <div v-if="Number(item.lockedCount) > 0" class="mb-2 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+            <span class="i-carbon-locked" />
+            {{ item.locked ? '已锁定' : `已锁定 ${item.lockedCount}` }}
           </div>
 
           <div class="mt-auto font-medium" :class="item.hoursText ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'">

@@ -182,7 +182,7 @@ function createDataProvider(deps) {
         doFarmOp: (ref, op) => callWorkerApi(resolveAccountId(ref), 'doFarmOp', op),
         buyFertilizer: (ref, type, count) => callWorkerApi(resolveAccountId(ref), 'buyFertilizer', type, count),
         checkAndBuyFertilizer: (ref, opts) => callWorkerApi(resolveAccountId(ref), 'checkAndBuyFertilizer', opts),
-        fertilizeLand: (ref, landId) => callWorkerApi(resolveAccountId(ref), 'fertilizeLand', landId),
+        fertilizeLand: (ref, landId, fertilizerType = 'organic') => callWorkerApi(resolveAccountId(ref), 'fertilizeLand', landId, fertilizerType),
         removePlant: (ref, landId) => callWorkerApi(resolveAccountId(ref), 'removePlant', landId),
         removeAllPlants: (ref) => callWorkerApi(resolveAccountId(ref), 'removeAllPlants'),
         getShopInfo: (ref, shopId) => callWorkerApi(resolveAccountId(ref), 'getShopInfo', shopId),
@@ -204,6 +204,7 @@ function createDataProvider(deps) {
 
         // ========== 仓库 ==========
         useItem: (ref, itemId, count, uid) => callWorkerApi(resolveAccountId(ref), 'useItem', itemId, count, uid),
+        setItemsLocked: (ref, itemUids, locked) => callWorkerApi(resolveAccountId(ref), 'setItemsLocked', itemUids, locked),
         sellItems: (ref, items) => callWorkerApi(resolveAccountId(ref), 'sellItems', items),
 
         // ========== 每日礼包 ==========

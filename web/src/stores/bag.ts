@@ -24,13 +24,17 @@ export const useBagStore = defineStore('bag', () => {
     return allItems.value.filter((it: any) => targetIds.has(Number(it.id || 0)))
   })
 
-  async function fetchBag(accountId: string) {
+  async function fetchBag(accountId: string, force = false) {
     if (!accountId)
       return
 
     const pending = pendingFetches.get(accountId)
-    if (pending)
-      return pending
+    if (pending) {
+      if (!force)
+        return pending
+      await pending
+      return fetchBag(accountId)
+    }
 
     const request = fetchBagOnce(accountId).finally(() => {
       if (pendingFetches.get(accountId) === request)
@@ -86,5 +90,12 @@ export const useBagStore = defineStore('bag', () => {
     return res.data
   }
 
-  return { items, allItems, originalItems, dashboardItems, loading, fetchBag, clearBag, useItem, sellItems }
+  async function setItemsLocked(accountId: string, itemUids: number[], locked: boolean) {
+    const res = await api.post('/api/bag/lock', { itemUids, locked }, {
+      headers: { 'x-account-id': accountId },
+    })
+    return res.data
+  }
+
+  return { items, allItems, originalItems, dashboardItems, loading, fetchBag, clearBag, useItem, sellItems, setItemsLocked }
 })

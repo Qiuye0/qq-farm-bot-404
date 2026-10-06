@@ -94,6 +94,12 @@ function toSellItem(raw) {
 }
 
 async function sellItems(items) {
+  const bagItems = getBagItems(await getBag());
+  for (const requested of items) {
+    const matches = bagItems.filter(item => toNum(item.id) === toNum(requested.id)
+      && (toNum(requested.uid) <= 0 || toNum(item.uid) === toNum(requested.uid)));
+    if (matches.some(isItemLocked)) throw new Error('物品已锁定，请先解锁');
+  }
   const request = types.SellRequest.encode(
     types.SellRequest.create({ items: items.map(toSellItem) })
   ).finish();
@@ -131,6 +137,13 @@ const useFirework = createFireworkUse({
 
 async function useBagItem(itemId, count, uid, target) {
   let itemUid = toNum(uid);
+  if (isSeedItem(toNum(itemId)) || getPlantBySeedId(toNum(itemId))) {
+    const matching = getBagItems(await getBag()).filter(item => toNum(item.id) === toNum(itemId)
+      && (itemUid <= 0 || toNum(item.uid) === itemUid));
+    const usable = matching.find(item => !isItemLocked(item) && toNum(item.count) >= count);
+    if (!usable) throw new Error('种子已锁定或可用库存不足');
+    itemUid = toNum(usable.uid);
+  }
   if (itemUid <= 0) {
     const bag = await getBag();
     const bagItem = getBagItems(bag).find((item) =>
@@ -182,6 +195,39 @@ function getBagItems(reply) {
     return reply.item_bag.items;
   }
   return reply && reply.items ? reply.items : [];
+}
+
+function isItemLocked(item) {
+  return item?.locked === true || item?.locked === 1 || item?.locked === '1';
+}
+
+async function setItemsLocked(itemUids, locked) {
+  if (typeof locked !== 'boolean') throw new Error('locked 必须是布尔值');
+  if (!Array.isArray(itemUids) || itemUids.length === 0
+    || itemUids.some(uid => !Number.isSafeInteger(uid) || uid <= 0))
+    throw new Error('缺少有效的物品 UID');
+  const requestedUids = [...new Set(itemUids)];
+  const byUid = new Map(getBagItems(await getBag()).map(item => [toNum(item.uid), item]));
+  const actionableUids = [];
+  for (const uid of requestedUids) {
+    const item = byUid.get(uid);
+    if (!item || toNum(item.count) <= 0) throw new Error(`背包中未找到 UID ${uid}`);
+    const id = toNum(item.id);
+    if (!isSeedItem(id) && !getPlantBySeedId(id) && Number(getItemById(id)?.type) !== 5)
+      throw new Error('仅支持种子上锁或解锁');
+    if (isItemLocked(item) !== locked) actionableUids.push(uid);
+  }
+  if (actionableUids.length === 0) return { locked, changed: 0, itemUids: [] };
+  const method = locked ? 'LockItems' : 'UnlockItems';
+  const Request = types[`${method}Request`];
+  const request = Request.encode(Request.create({ item_uids: actionableUids.map(toLong) })).finish();
+  const { body } = await sendMsgAsync('gamepb.itempb.ItemService', method, request);
+  const reply = types[`${method}Reply`].decode(body);
+  const confirmed = [...new Set((reply.item_uids || []).map(toNum))]
+    .filter(uid => actionableUids.includes(uid));
+  // 与普通版兼容：部分服务端成功回复为空，最终状态由重新读取背包确认。
+  const changedUids = confirmed.length ? confirmed : actionableUids;
+  return { locked, changed: changedUids.length, itemUids: changedUids };
 }
 
 /**
@@ -310,7 +356,7 @@ async function autoOpenFertilizerGiftPacks() {
       try {
         await batchUseItems([{ itemId, count, uid: 0 }]);
         used = count;
-      } catch (_) {
+      } catch {
         used = 0;
       }
 
@@ -419,7 +465,7 @@ async function getBagDetail() {
     const count = toNum(item.count);
     const uid = toNum(item.uid);
     if (id <= 0 || count <= 0) continue;
-    originalItems.push({ id, count, uid });
+    originalItems.push({ id, count, uid, locked: isItemLocked(item) });
   }
 
   // 按 ID 去重合并
@@ -459,6 +505,8 @@ async function getBagDetail() {
       merged.set(id, {
         id,
         count: 0,
+        lockedCount: 0,
+        unlockedCount: 0,
         name,
         image: getItemImageById(id),
         category,
@@ -480,7 +528,11 @@ async function getBagDetail() {
         hoursText: '',
       });
     }
-    merged.get(id).count += count;
+    const entry = merged.get(id);
+    entry.count += count;
+    if (isItemLocked(item)) entry.lockedCount += count;
+    else entry.unlockedCount += count;
+    entry.locked = entry.unlockedCount === 0;
   }
 
   // 计算容器时间显示
@@ -533,7 +585,7 @@ async function sellAllFruits() {
     for (const item of items) {
       const id = toNum(item.id);
       const count = toNum(item.count);
-      if (isFruitItemId(id) && count > 0) {
+      if (isFruitItemId(id) && count > 0 && !isItemLocked(item)) {
         fruits.push(item);
       }
     }
@@ -616,7 +668,7 @@ async function sellAllFruits() {
         const bagAfter = await getBag();
         const bagGold = getGoldFromItems(getBagItems(bagAfter));
         if (bagGold > prevGold) bagGoldGain = bagGold - prevGold;
-      } catch (_) {}
+      } catch {}
     }
 
     const totalGoldGain = Math.max(totalGoldFromReply, goldByState, bagGoldGain);
@@ -681,7 +733,7 @@ async function getBagSeeds() {
   for (const item of items || []) {
     const id = toNum(item && item.id);
     const count = toNum(item && item.count);
-    if (id <= 0 || count <= 0) continue;
+    if (id <= 0 || count <= 0 || isItemLocked(item)) continue;
 
     const plant = getPlantBySeedId(id);
     const info = getItemById(id) || null;
@@ -729,6 +781,8 @@ async function getBagSeeds() {
 module.exports = {
   getBag,
   getBagDetail,
+  setItemsLocked,
+  isItemLocked,
   sellItems,
   useItem,
   batchUseItems,
