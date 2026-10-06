@@ -1,0 +1,37 @@
+name: qq-farm-bot-404
+
+services:
+  qq-farm-bot:
+    image: registry.cn-hangzhou.aliyuncs.com/junjie0/qq-farm-404:${FARM_IMAGE_TAG:-latest}
+    platform: linux/amd64
+    container_name: qq-farm-404
+    restart: unless-stopped
+
+    ports:
+      - "${WEB_PORT:-4008}:3007"
+      # Enable only when the capture proxy is needed.
+      # - "18000:18000"
+
+    volumes:
+      - ${FARM_DATA_PATH:-./data}:/app/core/data
+
+    environment:
+      TZ: Asia/Shanghai
+      NODE_ENV: production
+      ADMIN_PORT: "3007"
+      FARM_DATA_DIR: /app/core/data
+      CAPTURE_ADVERTISE_IPS: "${CAPTURE_ADVERTISE_IPS:-auto}"
+      NAPCAT_LOGIN_ENABLED: "false"
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3007/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
