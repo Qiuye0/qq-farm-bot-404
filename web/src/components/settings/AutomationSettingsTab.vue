@@ -10,6 +10,7 @@ interface AutomationSettings {
   automation: {
     farm: boolean
     task: boolean
+    task_after_farm: boolean
     sell: boolean
     friend: boolean
     friend_auto_accept: boolean
@@ -178,6 +179,7 @@ watch(() => props.currentAccountId, loadQixiFriends)
       <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
         <BaseSwitch v-model="settings.automation.farm" label="自动种植收获" />
         <BaseSwitch v-model="settings.automation.task" label="自动做任务" />
+        <BaseSwitch v-model="settings.automation.task_after_farm" label="种植收获后巡查任务" />
         <BaseSwitch v-model="settings.automation.sell" label="自动卖果实" />
         <BaseSwitch v-model="settings.automation.friend" label="自动好友互动" />
         <BaseSwitch v-model="settings.automation.farm_push" label="推送触发巡田" />

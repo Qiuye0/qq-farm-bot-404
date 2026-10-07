@@ -211,6 +211,7 @@ let onDisconnectHandler = null;
 let onClientVersionUpdate = null;
 let wsErrorHandledAt = 0;
 let lastDailyRunDate = '';
+let dailyRoutineRunning = false;
 let friendSyncPaused = false;
 let starActivityClaimRunning = false;
 
@@ -249,7 +250,8 @@ function getLocalDateKey() {
 // ==================== 每日任务 ====================
 
 async function runDailyRoutines(force = false, options = {}) {
-    if (!loginReady || friendSyncPaused) return;
+    if (!loginReady || friendSyncPaused || dailyRoutineRunning) return;
+    dailyRoutineRunning = true;
     try {
         const automation = getAutomation() || {};
         await checkAndClaimEmails(force);
@@ -265,15 +267,25 @@ async function runDailyRoutines(force = false, options = {}) {
             event: '每日任务',
             result: 'error'
         });
+    } finally {
+        dailyRoutineRunning = false;
     }
+}
+
+function onFarmCheckCompleted() {
+    if (getAutomation().task_after_farm !== true) return;
+    // 复用日常流程，保留每日完成状态与冷却，避免随巡田频率反复领取。
+    runDailyRoutines(false).catch(() => null);
 }
 
 function stopDailyRoutineTimer() {
     workerScheduler.clear('daily_routine_interval');
+    networkEvents.off('farmCheckCompleted', onFarmCheckCompleted);
 }
 
 function startDailyRoutineTimer() {
     stopDailyRoutineTimer();
+    networkEvents.on('farmCheckCompleted', onFarmCheckCompleted);
     lastDailyRunDate = getLocalDateKey();
     runDailyRoutines(true, { skipTask: true }).catch(() => null);
 

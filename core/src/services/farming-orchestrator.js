@@ -46,9 +46,11 @@ async function checkFarm() {
   }
 
   isCheckingFarm = true;
+  let completed = false;
   try {
     const result = await runFarmOperation('all');
     isFirstFarmCheck = false;
+    completed = true;
     return !!(result && result.hadWork);
   } catch (err) {
     if (!isTransientNetworkError(err)) {
@@ -57,6 +59,7 @@ async function checkFarm() {
     return false;
   } finally {
     isCheckingFarm = false;
+    if (completed) networkEvents.emit('farmCheckCompleted');
   }
 }
 

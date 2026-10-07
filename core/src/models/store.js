@@ -255,6 +255,7 @@ const DEFAULT_AUTOMATION = {
     friend_bad: false,
     friend_golden_bug: false,
     task: true,
+    task_after_farm: false,
     star_passport_claim: false,
     star_solar_claim: false,
     star_record_claim: false,

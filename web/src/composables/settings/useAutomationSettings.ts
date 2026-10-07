@@ -11,6 +11,7 @@ const allFertilizerLandTypes = ['purple', 'gold', 'black', 'red', 'normal']
 const defaultAutomation = {
   farm: false,
   task: false,
+  task_after_farm: false,
   sell: false,
   friend: false,
   friend_auto_accept: true,

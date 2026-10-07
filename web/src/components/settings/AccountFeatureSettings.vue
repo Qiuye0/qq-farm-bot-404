@@ -137,6 +137,7 @@ function summaryTags(key: ModuleKey) {
   }
   return [
     automation.value.automation.task ? '自动完成日常任务' : '不做日常',
+    automation.value.automation.task_after_farm && '种植收获后巡查任务',
     SHOW_STAR_ACTIVITY && starFestivalEnabled.value && '心许千灯星垂野',
     SHOW_QIXI_ACTIVITY && qixiActivityEnabled.value && '鹊桥寄情',
     showRainPoemActivity.value && rainPoemActivityEnabled.value && '雨落成诗',
@@ -160,7 +161,7 @@ function moduleEnabled(key: ModuleKey) {
     return automation.value.automation.friend && automation.value.automation.friend_steal
   if (key === 'merchant')
     return automation.value.automation.mystery_shop_auto_buy
-  return activityEnabledCount.value > 0 || automation.value.automation.task
+  return activityEnabledCount.value > 0 || automation.value.automation.task || automation.value.automation.task_after_farm
 }
 
 function setModuleEnabled(key: ModuleKey, enabled: boolean) {
@@ -184,6 +185,7 @@ function setModuleEnabled(key: ModuleKey, enabled: boolean) {
   else {
     automation.value.automation.task = enabled
     if (!enabled) {
+      automation.value.automation.task_after_farm = false
       activityKeys.value.forEach((activityKey) => {
         automation.value.automation[activityKey] = false
       })
@@ -539,7 +541,11 @@ watch(() => props.currentAccountId, loadQixiFriends)
                 </div>
                 <div class="grid gap-3 sm:grid-cols-2">
                   <BaseSwitch v-model="automation.automation.task" label="自动完成日常任务" />
+                  <BaseSwitch v-model="automation.automation.task_after_farm" label="种植收获后巡查任务" />
                 </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  每轮自动种植收获结束后巡查一次日常任务，任务奖励领取遵循日常任务开关。
+                </p>
               </section>
 
               <section v-if="SHOW_STAR_ACTIVITY" class="border border-gray-100 rounded-lg p-4 space-y-3 dark:border-gray-700">
