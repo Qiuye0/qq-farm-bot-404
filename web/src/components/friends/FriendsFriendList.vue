@@ -13,6 +13,7 @@ const props = defineProps<{
   expandedFriends: Set<string>
   friendLands: Record<string, any[]>
   friendLandsLoading: Record<string, boolean>
+  deletingFriends: Record<string, boolean>
   isQqAccount: boolean
   canShowFriendAvatar: (friend: any) => boolean
   getFriendAvatar: (friend: any) => string
@@ -27,6 +28,7 @@ const emit = defineEmits<{
   (e: 'toggleFriend', friendId: string): void
   (e: 'operate', friendId: string, type: FriendActionType, event: Event): void
   (e: 'toggleBlacklist', friend: any, event: Event): void
+  (e: 'deleteFriend', friend: any, event: Event): void
   (e: 'removeKnownFriendGid', friend: any, event: Event): void
   (e: 'friendAvatarError', friend: any): void
 }>()
@@ -142,6 +144,15 @@ function goToPage(page: number) {
           @click="emit('removeKnownFriendGid', friend, $event)"
         >
           移出同步列表
+        </button>
+        <button
+          type="button"
+          class="rounded bg-red-100 px-3 py-2 text-sm text-red-700 transition disabled:cursor-not-allowed dark:bg-red-900/30 hover:bg-red-200 dark:text-red-400 disabled:opacity-50 dark:hover:bg-red-900/50"
+          :disabled="deletingFriends[String(friend.gid)]"
+          @click.stop="emit('deleteFriend', friend, $event)"
+        >
+          <span v-if="deletingFriends[String(friend.gid)]" class="i-svg-spinners-90-ring-with-bg mr-1 inline-block align-text-bottom" />
+          {{ deletingFriends[String(friend.gid)] ? '删除中…' : '删除好友' }}
         </button>
       </div>
     </div>

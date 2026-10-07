@@ -174,11 +174,22 @@ function registerAdminFriendRoutes({
 
     try {
       const gid = Number(req.params.gid);
-      if (!gid) {
+      if (!Number.isSafeInteger(gid) || gid <= 0) {
         return res.status(400).json({ ok: false, error: "无效的好友 GID" });
       }
 
       await provider.delFriend(accountId, gid);
+      if (store.addFriendToBlacklist) {
+        store.addFriendToBlacklist(accountId, gid);
+      }
+      if (store.getKnownFriendGids && store.setKnownFriendGids) {
+        const current = store.getKnownFriendGids(accountId) || [];
+        const next = current.filter(item => Number(item) !== gid);
+        if (next.length !== current.length) {
+          store.setKnownFriendGids(accountId, next);
+        }
+      }
+      broadcastConfig(provider, accountId);
       res.json({ ok: true, message: "删除好友成功" });
     } catch (error) {
       sendProviderError(res, error);

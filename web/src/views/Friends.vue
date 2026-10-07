@@ -28,6 +28,7 @@ const {
   dogInfoLoading,
   friendLands,
   friendLandsLoading,
+  deletingFriends,
   blacklist,
   interactRecords,
   interactLoading,
@@ -371,6 +372,29 @@ async function handleToggleBlacklist(friend: any, e: Event) {
   if (!currentAccountId.value)
     return
   await friendStore.toggleBlacklist(currentAccountId.value, Number(friend.gid))
+}
+
+async function handleDeleteFriend(friend: any, e: Event) {
+  e.stopPropagation()
+  const accountId = currentAccountId.value
+  const gid = Number(friend?.gid)
+  if (!accountId || deletingFriends.value[String(gid)])
+    return
+  const result = await friendStore.deleteFriend(accountId, {
+    gid,
+    name: friend?.name,
+    avatarUrl: getFriendAvatar(friend),
+  })
+  if (accountId !== currentAccountId.value)
+    return
+  if (result.ok) {
+    expandedFriends.value.delete(String(gid))
+    currentPage.value = Math.min(currentPage.value, totalPages.value)
+    toast.success(result.message || `已删除好友: ${friend?.name || gid}`)
+  }
+  else {
+    toast.error(result.message || '删除好友失败')
+  }
 }
 
 function getFriendStatusText(friend: any) {
@@ -757,6 +781,7 @@ async function handleBatchAddKnownFriendGids() {
             :expanded-friends="expandedFriends"
             :friend-lands="friendLands"
             :friend-lands-loading="friendLandsLoading"
+            :deleting-friends="deletingFriends"
             :is-qq-account="isQqAccount"
             :can-show-friend-avatar="canShowFriendAvatar"
             :get-friend-avatar="getFriendAvatar"
@@ -768,6 +793,7 @@ async function handleBatchAddKnownFriendGids() {
             @toggle-friend="toggleFriend"
             @operate="handleOp"
             @toggle-blacklist="handleToggleBlacklist"
+            @delete-friend="handleDeleteFriend"
             @remove-known-friend-gid="handleRemoveKnownFriendGid"
             @friend-avatar-error="handleFriendAvatarError"
           />

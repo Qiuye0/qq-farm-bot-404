@@ -21,6 +21,7 @@ export const useFriendStore = defineStore('friend', () => {
   const dogInfoLoading = ref(false)
   const friendLands = ref<Record<string, any[]>>({})
   const friendLandsLoading = ref<Record<string, boolean>>({})
+  const deletingFriends = ref<Record<string, boolean>>({})
   const blacklist = ref<BlacklistItem[]>([])
   const interactRecords = ref<any[]>([])
   const interactLoading = ref(false)
@@ -31,11 +32,16 @@ export const useFriendStore = defineStore('friend', () => {
   const friendsListCacheTtlSec = ref(60)
   const knownFriendSettingsLoading = ref(false)
   const knownFriendSettingsSaving = ref(false)
+  let accountGeneration = 0
+  let dataRevision = 0
 
   function clearFriendData() {
+    accountGeneration++
+    dataRevision++
     friends.value = []
     friendLands.value = {}
     friendLandsLoading.value = {}
+    deletingFriends.value = {}
     blacklist.value = []
     interactRecords.value = []
     interactError.value = ''
@@ -103,13 +109,14 @@ export const useFriendStore = defineStore('friend', () => {
     if (!accountId)
       return
     const requestedId = String(accountId)
+    const revision = dataRevision
     loading.value = true
     try {
       const res = await api.get('/api/friends', {
         headers: { 'x-account-id': accountId },
         params: forceSync ? { forceSync: 'true' } : {},
       })
-      if (!isCurrentAccount(requestedId))
+      if (!isCurrentAccount(requestedId) || revision !== dataRevision)
         return
       if (res.data.ok) {
         friends.value = res.data.data || []
@@ -124,13 +131,14 @@ export const useFriendStore = defineStore('friend', () => {
     if (!accountId)
       return { ok: false, error: '账号ID无效' }
     const requestedId = String(accountId)
+    const revision = dataRevision
     dogInfoLoading.value = true
     try {
       const res = await api.post('/api/friends/fetch-dog-info', {}, {
         headers: { 'x-account-id': accountId },
         timeout: 600000,
       })
-      if (res.data.ok && Array.isArray(res.data.friends) && isCurrentAccount(requestedId)) {
+      if (res.data.ok && Array.isArray(res.data.friends) && isCurrentAccount(requestedId) && revision === dataRevision) {
         friends.value = res.data.friends
       }
       return {
@@ -199,11 +207,12 @@ export const useFriendStore = defineStore('friend', () => {
     if (!accountId)
       return
     const requestedId = String(accountId)
+    const revision = dataRevision
     try {
       const res = await api.get('/api/friend-blacklist', {
         headers: { 'x-account-id': accountId },
       })
-      if (!isCurrentAccount(requestedId))
+      if (!isCurrentAccount(requestedId) || revision !== dataRevision)
         return
       if (res.data.ok) {
         blacklist.value = res.data.data || []
@@ -223,16 +232,56 @@ export const useFriendStore = defineStore('friend', () => {
     }
   }
 
+  async function deleteFriend(accountId: string, friend: { gid: number, name?: string, avatarUrl?: string }) {
+    const gid = Number(friend?.gid)
+    if (!accountId || !Number.isSafeInteger(gid) || gid <= 0 || !isCurrentAccount(accountId))
+      return { ok: false, message: '参数无效' }
+    const key = String(gid)
+    if (deletingFriends.value[key])
+      return { ok: false, message: '正在删除该好友' }
+    const generation = accountGeneration
+    deletingFriends.value[key] = true
+    try {
+      const res = await api.post(`/api/friend/${gid}/delete`, {}, {
+        headers: { 'x-account-id': accountId },
+        skipErrorToast: true,
+      } as any)
+      if (!res.data?.ok)
+        return { ok: false, message: res.data?.error || res.data?.message || '删除好友失败' }
+
+      if (generation === accountGeneration && isCurrentAccount(accountId)) {
+        dataRevision++
+        friends.value = friends.value.filter(item => Number(item.gid) !== gid)
+        delete friendLands.value[key]
+        delete friendLandsLoading.value[key]
+        knownFriendGids.value = knownFriendGids.value.filter(item => Number(item) !== gid)
+        if (!blacklist.value.some(item => Number(item.gid) === gid)) {
+          blacklist.value.push({ gid, name: friend.name || '', avatarUrl: friend.avatarUrl || '' })
+        }
+      }
+      return { ok: true, message: res.data.message || '删除好友成功' }
+    }
+    catch (e: any) {
+      return { ok: false, message: e?.response?.data?.error || e?.response?.data?.message || e?.message || '删除好友失败' }
+    }
+    finally {
+      if (generation === accountGeneration)
+        delete deletingFriends.value[key]
+    }
+  }
+
   async function fetchFriendLands(accountId: string, friendId: string) {
     if (!accountId || !friendId)
       return
     const requestedId = String(accountId)
+    const generation = accountGeneration
+    const revision = dataRevision
     friendLandsLoading.value[friendId] = true
     try {
       const res = await api.get(`/api/friend/${friendId}/lands`, {
         headers: { 'x-account-id': accountId },
       })
-      if (!isCurrentAccount(requestedId))
+      if (!isCurrentAccount(requestedId) || revision !== dataRevision)
         return
       if (res.data.ok) {
         const lands = res.data.data.lands || []
@@ -242,7 +291,8 @@ export const useFriendStore = defineStore('friend', () => {
       }
     }
     finally {
-      friendLandsLoading.value[friendId] = false
+      if (generation === accountGeneration && friendLandsLoading.value[friendId])
+        friendLandsLoading.value[friendId] = false
     }
   }
 
@@ -281,12 +331,13 @@ export const useFriendStore = defineStore('friend', () => {
     if (!accountId)
       return
     const requestedId = String(accountId)
+    const revision = dataRevision
     knownFriendSettingsLoading.value = true
     try {
       const res = await api.get('/api/friend-known-gids', {
         headers: { 'x-account-id': accountId },
       })
-      if (!isCurrentAccount(requestedId))
+      if (!isCurrentAccount(requestedId) || revision !== dataRevision)
         return
       if (res.data.ok) {
         applyKnownFriendSettings(res.data.data)
@@ -373,6 +424,7 @@ export const useFriendStore = defineStore('friend', () => {
     dogInfoLoading,
     friendLands,
     friendLandsLoading,
+    deletingFriends,
     blacklist,
     interactRecords,
     interactLoading,
@@ -388,6 +440,7 @@ export const useFriendStore = defineStore('friend', () => {
     fetchFriendDogInfo,
     fetchBlacklist,
     toggleBlacklist,
+    deleteFriend,
     fetchInteractRecords,
     fetchFriendLands,
     operate,

@@ -6,6 +6,8 @@ const {
   getFriendDogInfo,
   batchGetFriendDogInfo,
   fetchFriendsDogInfo,
+  getFriendsListCache,
+  setFriendsListCache,
 } = require('./friend-land-analyzer');
 const { doFriendOperation } = require('./friend-visit');
 const { runGoldenBugPlacement } = require('./golden-bug-service');
@@ -20,6 +22,15 @@ const {
   clearFriendsListCache,
   syncFriendsFromGids,
 } = require('./friend-orchestrator');
+
+async function delFriend(gid) {
+  const reply = await friendApi.delFriend(gid);
+  const cached = getFriendsListCache();
+  if (Array.isArray(cached)) {
+    setFriendsListCache(cached.filter(friend => Number(friend.gid) !== Number(gid)));
+  }
+  return reply;
+}
 
 module.exports = {
   checkFriends,
@@ -40,5 +51,5 @@ module.exports = {
   syncFriendsFromGids,
   bootstrapQqFriendGids: friendApi.bootstrapQqFriendGids,
   fetchFriendsDogInfo,
-  delFriend: friendApi.delFriend,
+  delFriend,
 };
