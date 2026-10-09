@@ -66,6 +66,7 @@ const { registerAdminQrLoginRoutes } = require("./admin-qr-login-routes");
 const { registerAdminNapcatLoginRoutes } = require("./admin-napcat-login-routes");
 const { createAdminRouteHelpers } = require("./admin-route-helpers");
 const { registerAdminSettingsRoutes } = require("./admin-settings-routes");
+const { registerAdminMutationRoutes } = require("./admin-mutation-routes");
 const { registerAdminShopRoutes } = require("./admin-shop-routes");
 const {
   createAdminSessionManager,
@@ -462,6 +463,7 @@ function startAdminServer(dataProvider) {
     sendProviderError,
   });
   registerAdminAnalyticsRoutes({ app });
+  registerAdminMutationRoutes({ app, provider, getAccountIdFromRequest, canAccessAccount, sendProviderError });
   registerAdminSettingsRoutes({
     app,
     provider,
@@ -474,6 +476,7 @@ function startAdminServer(dataProvider) {
   registerAdminSystemRoutes({
     app,
     store,
+    provider,
     logger: adminLogger,
     requireAdminToken,
     requireAdminRole,

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import api from '@/api'
+import MutationTestCard from '@/components/settings/MutationTestCard.vue'
 import StrategySettingsTab from '@/components/settings/StrategySettingsTab.vue'
 import StrategyTimingPanel from '@/components/settings/StrategyTimingPanel.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -30,6 +31,7 @@ const emit = defineEmits<{
 const strategy = defineModel<any>('strategy', { required: true })
 const automation = defineModel<any>('automation', { required: true })
 const activeModule = ref<ModuleKey | null>(null)
+const mutationTestActive = ref(false)
 const editSnapshot = ref<{ strategy: any, automation: any } | null>(null)
 const qixiFriends = ref<Array<{ gid: number, name: string }>>([])
 const SHOW_STAR_ACTIVITY = false
@@ -105,6 +107,7 @@ function summaryTags(key: ModuleKey) {
   if (key === 'fertilizer') {
     return [
       fertilizerName.value,
+      ...(automation.value.automation.fertilizer_2x2_ripen ? ['2x2催熟'] : []),
       selectedLandNames.value.join('、') || '未选土地',
       automation.value.automation.land_upgrade ? '升级土地' : '不升级',
       automation.value.automation.fertilizer_buy_organic || automation.value.automation.fertilizer_buy_normal ? '自动补肥' : '不补肥',
@@ -154,7 +157,7 @@ function moduleEnabled(key: ModuleKey) {
   if (key === 'planting')
     return automation.value.automation.farm
   if (key === 'fertilizer')
-    return automation.value.automation.fertilizer !== 'none' || automation.value.automation.land_upgrade
+    return automation.value.automation.fertilizer !== 'none' || automation.value.automation.land_upgrade || !!automation.value.automation.fertilizer_2x2_ripen
   if (key === 'friends')
     return automation.value.automation.friend
   if (key === 'steal')
@@ -165,11 +168,17 @@ function moduleEnabled(key: ModuleKey) {
 }
 
 function setModuleEnabled(key: ModuleKey, enabled: boolean) {
+  if (mutationTestActive.value && (key === 'planting' || key === 'fertilizer'))
+    return
   if (key === 'planting') {
     automation.value.automation.farm = enabled
   }
   else if (key === 'fertilizer') {
     automation.value.automation.fertilizer = enabled ? (automation.value.automation.fertilizer === 'none' ? 'normal' : automation.value.automation.fertilizer) : 'none'
+    if (!enabled) {
+      automation.value.automation.land_upgrade = false
+      automation.value.automation.fertilizer_2x2_ripen = false
+    }
   }
   else if (key === 'friends') {
     automation.value.automation.friend = enabled
@@ -307,7 +316,7 @@ watch(() => props.currentAccountId, loadQixiFriends)
             </div>
             <BaseSwitch
               :model-value="moduleEnabled(key as ModuleKey)"
-              :disabled="saving"
+              :disabled="saving || (mutationTestActive && (key === 'planting' || key === 'fertilizer'))"
               @update:model-value="setModuleEnabled(key as ModuleKey, !!$event)"
             />
           </div>
@@ -332,6 +341,11 @@ watch(() => props.currentAccountId, loadQixiFriends)
             </BaseButton>
           </div>
         </article>
+        <MutationTestCard
+          :account-id="currentAccountId"
+          :conflict="!!automation.automation.farm || automation.automation.fertilizer !== 'none' || !!automation.automation.land_upgrade || !!automation.automation.fertilizer_2x2_ripen"
+          @active="mutationTestActive = $event"
+        />
       </div>
     </template>
 
@@ -454,6 +468,7 @@ watch(() => props.currentAccountId, loadQixiFriends)
                   <BaseSelect v-model="automation.automation.fertilizer" label="施肥策略" :options="fertilizerOptions" />
                   <BaseInput v-if="['smart', 'smart_only', 'smart_normal'].includes(automation.automation.fertilizer)" v-model.number="automation.automation.fertilizer_smart_seconds" label="快成熟判定秒数" type="number" min="30" max="3600" />
                 </div>
+                <BaseSwitch v-model="automation.automation.fertilizer_2x2_ripen" label="2x2催熟" :disabled="mutationTestActive" />
                 <BaseSwitch v-model="automation.automation.fertilizer_multi_season" label="多季补肥" />
               </section>
 

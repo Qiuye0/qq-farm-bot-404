@@ -66,6 +66,13 @@ export const menuRoutes: MenuItem[] = [
     component: () => import('@/views/Analytics.vue'),
   },
   {
+    path: 'mutations',
+    name: 'mutations',
+    label: '变异',
+    icon: 'i-carbon-data-table',
+    component: () => import('@/views/Mutations.vue'),
+  },
+  {
     path: 'settings',
     name: 'Settings',
     label: '设置',

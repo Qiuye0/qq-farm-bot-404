@@ -58,6 +58,7 @@ interface AutomationSettings {
     mystery_shop_allow_coupon: boolean
     mystery_shop_allow_gold_bean: boolean
     fertilizer: string
+    fertilizer_2x2_ripen: boolean
     skip_own_weed_bug: boolean
     fertilizer_multi_season: boolean
     fertilizer_land_types: string[]
@@ -499,6 +500,10 @@ watch(() => props.currentAccountId, loadQixiFriends)
         </div>
 
         <div class="flex items-center gap-4">
+          <BaseSwitch
+            v-model="settings.automation.fertilizer_2x2_ripen"
+            label="2x2催熟"
+          />
           <BaseSwitch
             v-model="settings.automation.fertilizer_multi_season"
             label="多季补肥"

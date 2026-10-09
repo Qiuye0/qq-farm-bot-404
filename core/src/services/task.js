@@ -18,10 +18,12 @@ const { getItemById } = require('../config/gameConfig');
 // ---- 状态 ----
 
 let checking = false;
+let taskSystemVersion = 0;
 let taskClaimDoneDateKey = '';
 let taskClaimLastAt = 0;
 
 const taskScheduler = createScheduler('task');
+const MAX_TASK_CLAIM_ROUNDS = 10;
 
 // 时区偏移（UTC+8）
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -239,13 +241,14 @@ function buildGrowthTasks(taskInfoRaw) {
 /**
  * 检查并领取活跃奖励（日活跃 type=1，周活跃 type=2）
  */
-async function checkAndClaimActives(actives) {
+async function checkAndClaimActives(actives, canContinue) {
   const list = Array.isArray(actives) ? actives : [];
   let scanned = 0;
   let claimed = 0;
   let errors = 0;
 
   for (const active of list) {
+    if (!canContinue()) break;
     const type = toNum(active.type);
     const rewards = active.rewards || [];
     const pending = rewards.filter((r) => toNum(r.status) === 2); // ActiveStatus.DONE = 2
@@ -342,13 +345,6 @@ async function doClaim(task) {
   }
 }
 
-async function claimTasksFromList(tasks) {
-  if (!isAutomationOn('task')) return;
-  for (const task of tasks) {
-    await doClaim(task);
-  }
-}
-
 // ---- 主检查流程 ----
 
 async function checkAndClaimTasks() {
@@ -357,24 +353,38 @@ async function checkAndClaimTasks() {
   if (!isConnected()) return;
 
   checking = true;
+  const version = taskSystemVersion;
+  const canContinue = () =>
+    version === taskSystemVersion && isAutomationOn('task') && isConnected();
+  const attemptedIds = new Set();
 
   try {
-    const reply = await getTaskInfo();
-    if (!reply.task_info) {
-      checking = false;
-      return;
-    }
+    let reply = await getTaskInfo();
+    let rounds = 0;
+    while (canContinue() && reply.task_info) {
+      const taskInfo = reply.task_info;
 
-    const taskInfo = reply.task_info;
+      // Deduplicate merged task fields and stale snapshots within this scan.
+      const candidates = [
+        ...analyzeTaskList(buildDailyTasksForDebug(taskInfo), 'daily'),
+        ...analyzeTaskList(buildGrowthTasks(taskInfo), 'growth'),
+        ...analyzeTaskList(taskInfo.tasks || [], 'main'),
+      ];
+      const unique = new Map();
+      for (const task of candidates) {
+        if (!attemptedIds.has(task.id) && !unique.has(task.id)) unique.set(task.id, task);
+      }
+      const allClaimable = [...unique.values()];
+      const dailyClaimable = allClaimable.filter(task => task.category === 'daily');
 
-    // 收集可领取任务
-    const dailyTasks = buildDailyTasksForDebug(taskInfo);
-    const dailyClaimable = analyzeTaskList(dailyTasks, 'daily');
-    const growthClaimable = analyzeTaskList(taskInfo.growth_tasks || [], 'growth');
-    const mainClaimable = analyzeTaskList(taskInfo.tasks || [], 'main');
-    const allClaimable = [...dailyClaimable, ...growthClaimable, ...mainClaimable];
-
-    if (allClaimable.length > 0) {
+      if (allClaimable.length === 0) break;
+      if (rounds >= MAX_TASK_CLAIM_ROUNDS) {
+        logWarn('任务', '连续领取已达轮次上限，剩余任务等待下次巡查', {
+          module: 'task', event: '扫描任务', result: 'limit',
+        });
+        break;
+      }
+      rounds += 1;
       log('任务', `发现 ${allClaimable.length} 个可领取任务`, {
         module: 'task', event: '扫描任务', result: 'ok', count: allClaimable.length,
       });
@@ -386,8 +396,12 @@ async function checkAndClaimTasks() {
       }
 
       let dailyClaimed = 0;
+      let claimed = 0;
       for (const task of allClaimable) {
+        if (!canContinue()) return;
+        attemptedIds.add(task.id);
         const success = await doClaim(task);
+        if (success) claimed += 1;
         if (task.category === 'daily' && success) dailyClaimed += 1;
       }
 
@@ -396,19 +410,23 @@ async function checkAndClaimTasks() {
           module: 'task', event: '领取任务', result: 'none', scope: 'daily',
         });
       }
+      if (claimed === 0 || !canContinue()) break;
+      // Claims can unlock more tasks and update active-reward eligibility.
+      reply = await getTaskInfo();
     }
 
+    if (!canContinue() || !reply.task_info) return;
     // 活跃奖励
-    await checkAndClaimActives(taskInfo.actives || []);
+    await checkAndClaimActives(reply.task_info.actives || [], canContinue);
     // 图鉴奖励
-    await checkAndClaimIllustratedRewards();
+    if (canContinue()) await checkAndClaimIllustratedRewards();
   } catch (err) {
     if (isTransientError(err)) return;
     logWarn('任务', `检查任务失败: ${err.message}`, {
       module: 'task', event: '扫描任务', result: 'error',
     });
   } finally {
-    checking = false;
+    if (version === taskSystemVersion) checking = false;
   }
 }
 
@@ -439,9 +457,7 @@ function onTaskInfoNotify(payload) {
   }
 
   taskScheduler.setTimeoutTask('task_claim_debounce', 5000, async () => {
-    if (hasClaimable) await claimTasksFromList(claimable);
-    await checkAndClaimActives(actives);
-    await checkAndClaimIllustratedRewards();
+    await checkAndClaimTasks();
   });
 }
 
@@ -451,11 +467,12 @@ function initTaskSystem() {
   cleanupTaskSystem();
   networkEvents.on('taskInfoNotify', onTaskInfoNotify);
   taskScheduler.setTimeoutTask('task_init_bootstrap', 15000, () => {
-    checkAndClaimTasks();
+    return checkAndClaimTasks();
   });
 }
 
 function cleanupTaskSystem() {
+  taskSystemVersion += 1;
   networkEvents.off('taskInfoNotify', onTaskInfoNotify);
   taskScheduler.clearAll();
   checking = false;

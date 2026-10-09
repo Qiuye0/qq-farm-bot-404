@@ -1,4 +1,4 @@
-const { sendMsgAsync, getUserState, getWsErrorState } = require('../utils/network');
+const { getUserState, getWsErrorState } = require('../utils/network');
 const { types } = require('../utils/proto');
 const { toNum, toLong, toTimeSec, getServerTimeSec, log, logWarn, sleep } = require('../utils/utils');
 const { compareBagSeedGameOrder } = require('../utils/bag-seed-order');
@@ -16,6 +16,7 @@ const { getShopInfo, buyGoods, getSeedShopId } = require('./farm-api');
 const { buildLandMap, getDisplayLandContext } = require('./farm-land-analyzer');
 const { runFertilizerByConfig } = require('./farm-fertilizer');
 const { removePlant } = require('./farm-api');
+const { plantSeed } = require('./farm-api');
 
 const FARM_COLUMNS = 4;
 const FARM_ROWS = 6;
@@ -302,9 +303,7 @@ function expandRemoved2x2Lands(emptyLandIds, removedLandIds, lands) {
 }
 
 async function plant2x2Seed(seedId, group) {
-  const payload = encodePlantRequest(seedId, group.landIds);
-  const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Plant', payload);
-  const reply = types.PlantReply.decode(body);
+  const reply = await plantSeed(seedId, group.landIds);
   const landMap = buildLandMap(reply?.land || []);
   const master = landMap.get(group.masterLandId);
   const actualSlaves = new Set(
@@ -514,9 +513,7 @@ async function plantSeeds(seedId, landIds, options = {}) {
     if (planted >= maxPlantCount) break;
 
     try {
-      const payload = encodePlantRequest(seedId, [landId]);
-      const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Plant', payload);
-      const reply = types.PlantReply.decode(body);
+      const reply = await plantSeed(seedId, [landId]);
       const replyLands = Array.isArray(reply && reply.land) ? reply.land : [];
       const landMap = buildLandMap(replyLands);
       const tempLand = landMap.get(landId) || { id: landId };

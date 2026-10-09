@@ -166,6 +166,40 @@ function createDataProvider(deps) {
         },
 
         // ========== Farm API ==========
+        getMutationRecords: (ref, query) => require('../services/mutation-records').getMutationRepository(resolveAccountId(ref)).list(query),
+        clearMutationRecords: (ref) => {
+            const id = resolveAccountId(ref);
+            return workers[id]
+                ? callWorkerApi(id, 'clearMutationRecords')
+                : require('../services/mutation-records').getMutationRepository(id).clear();
+        },
+        getMutationTest: (ref) => {
+            const id = resolveAccountId(ref);
+            return workers[id]
+                ? callWorkerApi(id, 'getMutationTest')
+                : require('../services/mutation-test-state').readMutationTestState(id, true);
+        },
+        getMutationTestSeeds: (ref) => callWorkerApi(resolveAccountId(ref), 'getMutationTestSeeds'),
+        startMutationTest: async (ref, config) => {
+            const id = resolveAccountId(ref);
+            const { setMutationTestActive, conflictingAutomation } = require('../services/mutation-test-state');
+            if (conflictingAutomation(store.getAutomation(id))) throw new Error('请先关闭种植收获和土地施肥');
+            setMutationTestActive(id, true);
+            try {
+                return await callWorkerApi(id, 'startMutationTest', config);
+            } catch (error) {
+                // A timed-out start may still be executing in the Worker.
+                if (!workers[id]) setMutationTestActive(id, false);
+                else {
+                    try {
+                        const state = await callWorkerApi(id, 'getMutationTest');
+                        setMutationTestActive(id, !!state.enabled);
+                    } catch { /* Keep the lock until Worker state/exit confirms termination. */ }
+                }
+                throw error;
+            }
+        },
+        stopMutationTest: (ref) => callWorkerApi(resolveAccountId(ref), 'stopMutationTest'),
         getLands: (ref) => callWorkerApi(resolveAccountId(ref), 'getLands'),
         getDiamondBalance: (ref) => callWorkerApi(resolveAccountId(ref), 'getDiamondBalance'),
         getSeeds: (ref) => callWorkerApi(resolveAccountId(ref), 'getSeeds'),
@@ -348,6 +382,13 @@ function createDataProvider(deps) {
         setUITheme: async (theme) => {
             const result = store.setUITheme(theme);
             return { ui: result.ui || store.getUI() };
+        },
+
+        saveSystemSettings: async (config) => {
+            const saved = store.setSystemSettings(config);
+            nextConfigRevision();
+            broadcastConfigToWorkers();
+            return saved;
         },
 
         broadcastConfig: (accountId) => {

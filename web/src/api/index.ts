@@ -21,7 +21,7 @@ function showNetworkToast(message: string) {
 
 api.interceptors.request.use((config) => {
   const accountId = accountIdRef.value
-  if (accountId) {
+  if (accountId && !config.headers['x-account-id']) {
     config.headers['x-account-id'] = accountId
   }
   return config

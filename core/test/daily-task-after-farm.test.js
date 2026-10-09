@@ -34,6 +34,7 @@ function farmFixture(events, getAllLands = async () => ({ lands: [] })) {
     './scheduler': { createScheduler: () => scheduler },
     './farm-api': { getAllLands },
     './farm-scheduler': { startFertilizerBuyCheckTimer: () => {}, stopFertilizerBuyCheckTimer: () => {} },
+    './mutation-operation-gate': { farmOperationGate: require('../src/services/mutation-operation-gate').createOperationGate() },
   };
   context.require = name => mocks[name] || {};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/services/farming-orchestrator.js'), 'utf8'), context);

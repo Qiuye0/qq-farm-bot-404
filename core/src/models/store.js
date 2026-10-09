@@ -4,6 +4,7 @@ const path = require('node:path');
 const { getDataFile, ensureDataDir } = require('../config/runtime-paths');
 const { readTextFile, readJsonFile, writeJsonFileAtomic } = require('../services/json-db');
 const { compareBagSeedGameOrder } = require('../utils/bag-seed-order');
+const { normalizeSystemSettings, validateSystemSettings } = require('../config/system-settings');
 
 // ==================== 文件路径 ====================
 
@@ -224,6 +225,9 @@ const PUSHOO_CHANNELS = new Set([
 
 const DEFAULT_OFFLINE_REMINDER = {
     channel: 'smtp',
+    smtpEnabled: false,
+    xtuisEnabled: false,
+    xtuisToken: '',
     reloginUrlMode: 'none',
     endpoint: '',
     token: '',
@@ -302,6 +306,7 @@ const DEFAULT_AUTOMATION = {
     mystery_shop_allow_gold_bean: false,
     sell: false,
     fertilizer: 'smart_normal',
+    fertilizer_2x2_ripen: false,
     fertilizer_multi_season: true,
     fertilizer_land_types: [...DEFAULT_FERTILIZER_LAND_TYPES],
     fertilizer_smart_seconds: 300,
@@ -572,7 +577,7 @@ function normalizeOfflineReminder(raw) {
     const legacyEndpointChannel = PUSHOO_CHANNELS.has(endpoint.toLowerCase())
         ? endpoint.toLowerCase() : '';
     let channel = rawChannel || legacyEndpointChannel || def.channel;
-    if (channel !== 'smtp' && !PUSHOO_CHANNELS.has(channel)) channel = def.channel;
+    if (channel !== 'smtp' && channel !== 'xtuis' && !PUSHOO_CHANNELS.has(channel)) channel = def.channel;
 
     const rawReloginUrlMode = input.reloginUrlMode !== undefined && input.reloginUrlMode !== null
         ? String(input.reloginUrlMode).trim().toLowerCase() : def.reloginUrlMode;
@@ -613,13 +618,22 @@ function normalizeOfflineReminder(raw) {
     const emailContent = input.emailContent !== undefined && input.emailContent !== null
         ? String(input.emailContent).trim() : def.emailContent;
 
+    const smtpEnabled = typeof input.smtpEnabled === 'boolean'
+        ? input.smtpEnabled : channel === 'smtp' && !!(smtpHost && smtpUser && smtpPass && recipientEmail);
+    const xtuisEnabled = typeof input.xtuisEnabled === 'boolean'
+        ? input.xtuisEnabled : channel === 'xtuis' && !!input.token;
+    const xtuisToken = String(input.xtuisToken ?? (channel === 'xtuis' ? token : '')).trim();
+
     return {
         channel,
+        smtpEnabled,
+        xtuisEnabled,
+        xtuisToken,
         reloginUrlMode,
         endpoint,
         token,
         title,
-        msg,
+        msg: typeof input.smtpEnabled !== 'boolean' && channel === 'smtp' && emailContent ? emailContent : msg,
         offlineDeleteSec,
         smtpHost,
         smtpPort,
@@ -756,6 +770,7 @@ const globalConfig = {
     announcementReadRecords: {},
     superAdminAnnouncement: { content: '', password: '', updatedAt: 0 },
     systemConfig: null,
+    systemSettings: normalizeSystemSettings(),
     loginLinks: null,
     captureConfig: null,
     deviceProtocol: null,
@@ -940,6 +955,7 @@ function getAccountConfigSnapshot(accountId) {
 
 function setAccountConfigSnapshot(accountId, config, save = true) {
     const id = resolveAccountId(accountId);
+    require('../services/mutation-test-state').assertMutationConfig(id, config);
     if (!id) {
         accountFallbackConfig = normalizeAccountConfig(config, accountFallbackConfig);
         globalConfig.defaultAccountConfig = cloneAccountConfig(accountFallbackConfig);
@@ -1057,6 +1073,8 @@ function loadGlobalConfig() {
                 updatedAt: Number(data.superAdminAnnouncement.updatedAt) || 0
             };
         }
+
+        globalConfig.systemSettings = normalizeSystemSettings(data.systemSettings);
 
         // 系统配置
         if (data.systemConfig && typeof data.systemConfig === 'object') {
@@ -1258,6 +1276,7 @@ function getConfigSnapshot(accountId) {
         goldenBugRoundLimit: Math.max(1, Math.min(100, Number(cfg.goldenBugRoundLimit) || 24)),
         bagSeedPriority: [...cfg.bagSeedPriority || []],
         bagSeedKnownIds: [...cfg.bagSeedKnownIds || []],
+        systemSettings: getSystemSettings(),
         ui
     };
 }
@@ -1379,6 +1398,10 @@ function applyConfigSnapshot(patch = {}, opts = {}) {
         }
     }
 
+    // Global settings arrive from the master only; account saves cannot overwrite them.
+    if (!persist && patch.systemSettings) {
+        globalConfig.systemSettings = normalizeSystemSettings(patch.systemSettings);
+    }
     setAccountConfigSnapshot(accountId, cfg, false);
     if (persist) saveGlobalConfig();
     return getConfigSnapshot(accountId);
@@ -1832,6 +1855,23 @@ function verifySuperAdminAnnouncementPassword(password) {
 
 // ==================== 系统配置 ====================
 
+function getSystemSettings() {
+    return { ...globalConfig.systemSettings };
+}
+
+function setSystemSettings(config) {
+    const next = validateSystemSettings(config);
+    const previous = globalConfig.systemSettings;
+    globalConfig.systemSettings = next;
+    try {
+        saveGlobalConfig({ throwOnError: true });
+    } catch (error) {
+        globalConfig.systemSettings = previous;
+        throw error;
+    }
+    return getSystemSettings();
+}
+
 function getSystemConfig() {
     return globalConfig.systemConfig ? { ...globalConfig.systemConfig } : null;
 }
@@ -2022,6 +2062,8 @@ function setAntiResaleConfig(config) {
 // ==================== 模块导出 ====================
 
 module.exports = {
+    getSystemSettings,
+    setSystemSettings,
     getConfigSnapshot,
     applyConfigSnapshot,
     getAutomation,

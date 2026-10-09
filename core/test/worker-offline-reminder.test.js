@@ -31,7 +31,7 @@ function createHarness(t) {
   });
   t.after(() => manager.dispose());
   manager.startWorker({ id: 'a1', name: '测试账号', username: 'owner', code: 'code' });
-  return { proc, workers, reminders, accountLogs };
+  return { proc, workers, reminders, accountLogs, manager };
 }
 
 test('WS 400 登录失效立即触发下线提醒并携带所属用户', (t) => {
@@ -63,4 +63,25 @@ test('踢下线后 Worker 退出不会重复发送提醒', (t) => {
   assert.equal(reminders.length, 1);
   assert.equal(reminders[0].username, 'owner');
   assert.equal(reminders[0].reason, 'kickout:异地登录');
+});
+
+test('mutation task state guards configuration until completion or Worker exit', (t) => {
+  const { assertMutationConfig } = require('../src/services/mutation-test-state');
+  const { proc } = createHarness(t);
+  proc.emit('message', { type: 'mutation_test_state', data: { enabled: true } });
+  assert.throws(() => assertMutationConfig('a1', { automation: { farm: true } }), /测变异运行中/);
+  proc.emit('message', { type: 'mutation_test_state', data: { enabled: false } });
+  assertMutationConfig('a1', { automation: { farm: true } });
+  proc.emit('message', { type: 'mutation_test_state', data: { enabled: true } });
+  proc.emit('exit', 1);
+  assertMutationConfig('a1', { automation: { farm: true } });
+});
+
+test('forced Worker termination releases the mutation configuration guard', async (t) => {
+  const { assertMutationConfig } = require('../src/services/mutation-test-state');
+  const { proc, manager } = createHarness(t);
+  proc.emit('message', { type: 'mutation_test_state', data: { enabled: true } });
+  manager.stopWorker('a1');
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assertMutationConfig('a1', { automation: { farm: true } });
 });

@@ -53,6 +53,7 @@ export interface AutomationConfig {
   mystery_shop_allow_coupon?: boolean
   mystery_shop_allow_gold_bean?: boolean
   fertilizer?: string
+  fertilizer_2x2_ripen?: boolean
   fertilizer_multi_season?: boolean
   fertilizer_land_types?: string[]
   fertilizer_smart_seconds?: number
@@ -83,6 +84,9 @@ export interface FriendQuietHoursConfig {
 }
 
 export interface OfflineConfig {
+  smtpEnabled: boolean
+  xtuisEnabled: boolean
+  xtuisToken: string
   channel: string
   reloginUrlMode: string
   endpoint: string
@@ -136,9 +140,12 @@ export interface SettingsState {
   goldenBugRoundLimit: number
 }
 
-function createDefaultOfflineReminder(): OfflineConfig {
+export function createDefaultOfflineReminder(): OfflineConfig {
   return {
     channel: 'smtp',
+    smtpEnabled: false,
+    xtuisEnabled: false,
+    xtuisToken: '',
     reloginUrlMode: 'none',
     endpoint: '',
     token: '',
@@ -166,6 +173,9 @@ function normalizeOfflineReminder(input: Partial<OfflineConfig> | null | undefin
   return {
     ...createDefaultOfflineReminder(),
     ...(input || {}),
+    smtpEnabled: typeof input?.smtpEnabled === 'boolean' ? input.smtpEnabled : (!input?.channel || input.channel === 'smtp') && !!(input?.smtpHost && input.smtpUser && input.smtpPass && input.recipientEmail),
+    xtuisEnabled: typeof input?.xtuisEnabled === 'boolean' ? input.xtuisEnabled : input?.channel === 'xtuis' && !!input.token,
+    xtuisToken: input?.xtuisToken ?? (input?.channel === 'xtuis' ? input.token : '') ?? '',
   }
 }
 
@@ -320,7 +330,7 @@ export const useSettingStore = defineStore('setting', () => {
     try {
       const { data } = await api.post('/api/settings/offline-reminder', config)
       if (data && data.ok) {
-        settings.value.offlineReminder = normalizeOfflineReminder(config)
+        settings.value.offlineReminder = normalizeOfflineReminder(data.data || config)
         return { ok: true }
       }
       return { ok: false, error: '保存失败' }

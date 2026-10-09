@@ -48,6 +48,7 @@ function deleteManagedLoginLogo(logoUrl) {
 function registerAdminSystemRoutes({
   app,
   store,
+  provider,
   logger,
   requireAdminToken,
   requireAdminRole,
@@ -57,6 +58,26 @@ function registerAdminSystemRoutes({
   getRuntimeConfig,
   updateRuntimeConfig,
 }) {
+  app.get("/api/admin/system-settings", requireAdminToken, requireAdminRole, (req, res) => {
+    res.json({ ok: true, data: store.getSystemSettings() });
+  });
+
+  app.post("/api/admin/system-settings", requireAdminToken, requireAdminRole, async (req, res) => {
+    try {
+      const { validateSystemSettings } = require("../config/system-settings");
+      let config;
+      try {
+        config = validateSystemSettings(req.body);
+      } catch (error) {
+        return res.status(400).json({ ok: false, error: error.message });
+      }
+      const data = await provider.saveSystemSettings(config);
+      res.json({ ok: true, data });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   const isAllowedPublicLink = (value) => {
     const link = String(value || "").trim();
     return (

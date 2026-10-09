@@ -9,6 +9,7 @@ import AccountSettingsTab from '@/components/settings/AccountSettingsTab.vue'
 import AutoCodeRefreshCard from '@/components/settings/AutoCodeRefreshCard.vue'
 import DeviceProtocolCard from '@/components/settings/DeviceProtocolCard.vue'
 import OfflineReminderCard from '@/components/settings/OfflineReminderCard.vue'
+import SystemSettingsTab from '@/components/settings/SystemSettingsTab.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import { useAccountSettings } from '@/composables/settings/useAccountSettings'
 import { useAutomationSettings } from '@/composables/settings/useAutomationSettings'
@@ -20,9 +21,9 @@ import { useSettingStore } from '@/stores/setting'
 const settingStore = useSettingStore()
 const route = useRoute()
 
-type SettingsTabKey = 'account' | 'account-config' | 'notification' | 'system'
+type SettingsTabKey = 'account' | 'account-config' | 'notification' | 'system' | 'system-settings'
 
-const SETTINGS_TAB_KEYS: SettingsTabKey[] = ['account', 'account-config', 'notification', 'system']
+const SETTINGS_TAB_KEYS: SettingsTabKey[] = ['account', 'account-config', 'notification', 'system', 'system-settings']
 const LEGACY_SETTINGS_TABS: Record<string, SettingsTabKey> = {
   'strategy': 'account-config',
   'automation': 'account-config',
@@ -63,6 +64,7 @@ const tabs = [
   { key: 'account', label: '账号管理', icon: 'i-carbon-user-settings' },
   { key: 'account-config', label: '账号设置', icon: 'i-carbon-settings-adjust' },
   { key: 'notification', label: '通知设置', icon: 'i-carbon-notification' },
+  { key: 'system-settings', label: '系统设置', icon: 'i-carbon-settings' },
   { key: 'system', label: '系统配置', icon: 'i-carbon-settings-services' },
 ] as const
 
@@ -127,9 +129,6 @@ const {
   selectedDevicePreset,
   deviceProtocolForm,
   localOffline,
-  channelOptions,
-  currentChannelDocUrl,
-  openChannelDocs,
   fillRandomDeviceMac,
   fillRandomDeviceId,
   fillRandomImei,
@@ -480,15 +479,19 @@ onMounted(async () => {
           </div>
           <OfflineReminderCard
             v-model:config="localOffline"
-            :channel-options="channelOptions"
-            :current-channel-doc-url="currentChannelDocUrl"
             :saving="offlineSaving"
             :testing="offlineTesting"
             :show-save="false"
-            @open-docs="openChannelDocs"
             @test="handleTestOffline"
           />
         </div>
+
+        <template v-else-if="activeTab === 'system-settings'">
+          <SystemSettingsTab v-if="userIsAdmin" />
+          <p v-else class="py-6 text-sm text-gray-500 dark:text-gray-400">
+            仅管理员可修改系统设置
+          </p>
+        </template>
 
         <div v-else-if="activeTab === 'system'" class="space-y-5">
           <div class="sticky top-0 z-10 flex items-center justify-between border border-gray-200 rounded-xl bg-white/95 p-4 shadow-sm backdrop-blur dark:border-gray-700 dark:bg-gray-800/95">

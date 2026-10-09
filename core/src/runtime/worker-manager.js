@@ -281,7 +281,7 @@ function createWorkerManager(deps) {
 
         // 监听 Worker 消息
         proc.on('message', (msg) => {
-            handleWorkerMessage(account.id, msg);
+            if (workers[account.id]?.process === proc) handleWorkerMessage(account.id, msg);
         });
 
         // 监听 Worker 错误
@@ -325,6 +325,7 @@ function createWorkerManager(deps) {
             }
 
             if (wrk && wrk.process === proc) {
+                require('../services/mutation-test-state').setMutationTestActive(account.id, false);
                 delete workers[account.id];
             }
         });
@@ -350,6 +351,7 @@ function createWorkerManager(deps) {
             const current = workers[accountId];
             if (current && current.process === targetProc) {
                 current.process.kill();
+                require('../services/mutation-test-state').setMutationTestActive(accountId, false);
                 delete workers[accountId];
             }
         });
@@ -414,7 +416,9 @@ function createWorkerManager(deps) {
         const wrk = workers[accountId];
         if (!wrk) return;
 
-        if (msg.type === 'task_permit_request') {
+        if (msg.type === 'mutation_test_state') {
+            require('../services/mutation-test-state').setMutationTestActive(accountId, !!msg.data?.enabled);
+        } else if (msg.type === 'task_permit_request') {
             const token = `${accountId}:${String(msg.token || '')}`;
             permitQueue.push({ accountId, token, proc: wrk.process, requestedAt: Date.now() });
             drainPermitQueue();

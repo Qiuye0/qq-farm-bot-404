@@ -1,6 +1,38 @@
 const { sendMsgAsync, getUserState } = require('../utils/network');
 const { types, waitForProtoReady } = require('../utils/proto');
-const { toLong, sleep } = require('../utils/utils');
+const { toLong, sleep, logWarn } = require('../utils/utils');
+const { guardFarmOperation, farmOperationGate } = require('./mutation-operation-gate');
+const { recordPlanting, captureHarvest, finishHarvest, recordSafely, observeLands, observedStage } = require('./mutation-recorder');
+const { getMutationRepository } = require('./mutation-records');
+const { randomUUID } = require('node:crypto');
+const { toNum } = require('../utils/utils');
+
+let observationClock = Date.now();
+function observationTime() {
+  observationClock = Math.max(Date.now(), observationClock + 1);
+  return observationClock;
+}
+
+function accountId() {
+  return String(getUserState()?.accountId || process.env.FARM_ACCOUNT_ID || '');
+}
+
+async function plantSeed(seedId, landIds, metadata = {}) {
+  const requestedAt = observationTime();
+  const payload = types.PlantRequest.encode(types.PlantRequest.create({
+    items: [{ seed_id: toLong(seedId), land_ids: landIds.map(toLong) }],
+  })).finish();
+  const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Plant', payload);
+  const reply = types.PlantReply.decode(body);
+  try {
+    const records = recordSafely(() => recordPlanting(accountId(), seedId, reply, metadata, landIds, requestedAt), !!metadata.testId);
+    if (metadata.testId && records?.length !== 1) throw new Error('种植已返回，但无法确认变异记录，测试已停止');
+  } catch (error) {
+    error.planted = true;
+    throw error;
+  }
+  return reply;
+}
 
 /** 普通化肥 ID */
 const NORMAL_FERTILIZER_ID = 1011;
@@ -29,10 +61,20 @@ async function sendPlantRequest(ReqType, ReplyType, method, landIds, hostGid) {
 // ─── 农场 API ───
 
 /** 获取所有地块数据 */
-async function getAllLands() {
+async function getAllLands(options = {}) {
+  const requestedAt = observationTime();
   const payload = types.AllLandsRequest.encode(types.AllLandsRequest.create({})).finish();
   const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'AllLands', payload);
   const reply = types.AllLandsReply.decode(body);
+  if (!options.preserveRecords) recordSafely(() => {
+    const lands = reply.lands || [];
+    if (options.observationLandId !== undefined) {
+      observeLands(accountId(), lands.filter(land => toNum(land.id) !== options.observationLandId), { source: 'lands', requestedAt });
+    }
+    observeLands(accountId(), lands.filter(land => options.observationLandId === undefined || toNum(land.id) === options.observationLandId), {
+      source: options.source || 'lands', requestedAt, operationId: options.operationId,
+    });
+  }, options.strict);
   if (reply.operation_limits && onOperationLimitsUpdate) {
     onOperationLimitsUpdate(reply.operation_limits);
   }
@@ -40,15 +82,38 @@ async function getAllLands() {
 }
 
 /** 一键收获 */
-async function harvest(landIds) {
+async function harvest(landIds, options = {}) {
   const userState = getUserState();
+  const readSnapshot = async (readOptions) => {
+    try { return await getAllLands(readOptions); }
+    catch (error) {
+      if (options.strict) throw error;
+      logWarn('变异记录', `收获快照读取失败: ${error.message}`);
+      if (accountId()) recordSafely(() => getMutationRepository(accountId()).invalidate(landIds, 'unknown'));
+      return { lands: [] };
+    }
+  };
+  const before = await readSnapshot({ strict: options.strict, source: 'harvest_before' });
+  const captures = recordSafely(() => captureHarvest(accountId(), before.lands || [], landIds), options.strict) || [];
+  if (options.strict && captures.length !== landIds.length) throw new Error('测试作物与种植记录不匹配');
   const payload = types.HarvestRequest.encode(types.HarvestRequest.create({
     land_ids: landIds,
     host_gid: toLong(userState.gid),
     is_all: true
   })).finish();
-  const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Harvest', payload);
-  return types.HarvestReply.decode(body);
+  farmOperationGate.assertAllowed();
+  if (accountId()) recordSafely(() => getMutationRepository(accountId()).prepareHarvest(captures), options.strict);
+  try {
+    const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Harvest', payload);
+    const reply = types.HarvestReply.decode(body);
+    // Replies may omit unchanged/empty lands. A fresh snapshot confirms each result.
+    const after = await readSnapshot({ preserveRecords: true });
+    const recorded = recordSafely(() => finishHarvest(accountId(), captures, after.lands || []), options.strict);
+    if (options.strict && recorded !== captures.length) throw new Error('收获结果未能完整确认，测试已停止');
+    return reply;
+  } finally {
+    if (accountId()) recordSafely(() => getMutationRepository(accountId()).abandonHarvest(captures.map(row => row.id)), options.strict);
+  }
 }
 
 /** 浇水 */
@@ -76,13 +141,57 @@ async function insecticide(landIds) {
 }
 
 /** 单次施肥，返回服务端权威土地与肥料库存快照。 */
-async function fertilizeOne(landId, fertilizerId = NORMAL_FERTILIZER_ID) {
+async function fertilizeOne(landId, fertilizerId = NORMAL_FERTILIZER_ID, options = {}) {
+  const id = accountId();
+  const repository = id ? getMutationRepository(id) : null;
+  const operationId = randomUUID();
+  let beforeKnown = false;
+  try {
+    const before = await getAllLands({ strict: options.strict, source: 'fertilizer_before', operationId, observationLandId: landId });
+    beforeKnown = (before.lands || []).some(land => toNum(land.id) === landId);
+  } catch (error) {
+    if (options.strict) throw error;
+    logWarn('变异记录', `施肥前快照读取失败: ${error.message}`);
+  }
+  const before = recordSafely(() => repository?.activeRecord(landId), options.strict);
+  const requestedAt = observationTime();
+  const operation = {
+    id: operationId, recordId: before?.id, landId, fertilizerId, requestedAt,
+    beforeStage: beforeKnown ? before?.currentStage ?? null : null,
+    afterStage: null, consumedSeconds: null, consumedItemId: null, remainingSeconds: null,
+    status: 'unknown', requestSent: false, quality: beforeKnown ? 'after_missing' : 'before_missing',
+  };
   const payload = types.FertilizeRequest.encode(types.FertilizeRequest.create({
     land_ids: [toLong(landId)],
     fertilizer_id: toLong(fertilizerId)
   })).finish();
-  const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Fertilize', payload);
-  return types.FertilizeReply.decode(body);
+  try {
+    farmOperationGate.assertAllowed();
+    operation.requestSent = true;
+    const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Fertilize', payload);
+    const reply = types.FertilizeReply.decode(body);
+    operation.status = 'success';
+    const after = (reply.land || []).filter(land => toNum(land.id) === landId);
+    if (before) recordSafely(() => observeLands(id, after, {
+      source: 'fertilizer_after', requestedAt, operationId, recordId: before.id,
+    }), options.strict);
+    operation.afterStage = observedStage(before, after[0]);
+    operation.quality = !beforeKnown ? 'before_missing' : !after.length ? 'after_missing'
+      : operation.beforeStage === null || operation.afterStage === null ? 'stage_unknown' : 'known';
+    const consumed = reply.fertilizer_use?.consumed;
+    operation.consumedSeconds = consumed && Object.hasOwn(consumed, 'count') ? toNum(consumed.count) : null;
+    operation.consumedItemId = consumed && Object.hasOwn(consumed, 'id') ? toNum(consumed.id) : null;
+    operation.remainingSeconds = reply.fertilizer && Object.hasOwn(reply.fertilizer, 'count') ? toNum(reply.fertilizer.count) : null;
+    if (options.strict && (!before || !after.length)) throw new Error('施肥阶段快照不完整，测试已停止');
+    return reply;
+  } catch (error) {
+    if (!operation.requestSent) operation.status = 'not_sent';
+    operation.error = error.message;
+    throw error;
+  } finally {
+    operation.finishedAt = Date.now();
+    if (before) recordSafely(() => repository.recordOperation(operation), options.strict);
+  }
 }
 
 /**
@@ -95,11 +204,7 @@ async function fertilize(landIds, fertilizerId = NORMAL_FERTILIZER_ID) {
   let successCount = 0;
   for (const landId of landIds) {
     try {
-      const payload = types.FertilizeRequest.encode(types.FertilizeRequest.create({
-        land_ids: [toLong(landId)],
-        fertilizer_id: toLong(fertilizerId)
-      })).finish();
-      await sendMsgAsync('gamepb.plantpb.PlantService', 'Fertilize', payload);
+      await fertilizeOne(landId, fertilizerId);
       successCount++;
     } catch {
       break;
@@ -118,7 +223,9 @@ async function removePlant(landIds) {
     land_ids: landIds.map(id => toLong(id))
   })).finish();
   const { body } = await sendMsgAsync('gamepb.plantpb.PlantService', 'RemovePlant', payload);
-  return types.RemovePlantReply.decode(body);
+  const reply = types.RemovePlantReply.decode(body);
+  if (accountId()) recordSafely(() => getMutationRepository(accountId()).invalidate(landIds));
+  return reply;
 }
 
 /** 升级土地 */
@@ -186,20 +293,21 @@ async function buyGoods(goodsId, num, price) {
 }
 
 module.exports = {
+  plantSeed: guardFarmOperation(plantSeed),
   NORMAL_FERTILIZER_ID,
   ORGANIC_FERTILIZER_ID,
   setOperationLimitsCallback,
   getAllLands,
-  harvest,
-  waterLand,
-  farming,
-  weedOut,
-  insecticide,
-  fertilize,
-  fertilizeOne,
-  removePlant,
-  upgradeLand,
-  unlockLand,
+  harvest: guardFarmOperation(harvest),
+  waterLand: guardFarmOperation(waterLand),
+  farming: guardFarmOperation(farming),
+  weedOut: guardFarmOperation(weedOut),
+  insecticide: guardFarmOperation(insecticide),
+  fertilize: guardFarmOperation(fertilize),
+  fertilizeOne: guardFarmOperation(fertilizeOne),
+  removePlant: guardFarmOperation(removePlant),
+  upgradeLand: guardFarmOperation(upgradeLand),
+  unlockLand: guardFarmOperation(unlockLand),
   getShopInfo,
   buyGoods,
   getShopProfiles,

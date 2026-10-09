@@ -65,6 +65,7 @@ const defaultAutomation = {
   mystery_shop_allow_coupon: false,
   mystery_shop_allow_gold_bean: false,
   fertilizer: 'none',
+  fertilizer_2x2_ripen: false,
   skip_own_weed_bug: false,
   fertilizer_multi_season: false,
   fertilizer_land_types: [...allFertilizerLandTypes],

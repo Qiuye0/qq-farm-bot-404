@@ -67,6 +67,18 @@ pnpm dev:core
 
 看到服务启动后，打开 <http://localhost:3007>，你的农场控制室就准备好了。
 
+macOS / Linux 也可以在项目目录直接启停本地后台服务：
+
+```bash
+./start.sh
+./stop.sh
+```
+
+`start.sh` 首次运行会安装缺失的依赖，每次启动会构建最新前端；重复启动不会创建第二个服务。
+服务就绪后打开 <http://localhost:3007>，关闭终端后服务仍会运行。账号运行状态在 Web 面板中控制。
+日志位于 `core/data/local-service.log`，可用 `tail -f core/data/local-service.log` 查看。
+需要其他端口时使用 `ADMIN_PORT=3008 ./start.sh`，停止时仍运行 `./stop.sh`。
+
 想继续装修控制室？可以另外启动前端开发服务器：
 
 ```bash

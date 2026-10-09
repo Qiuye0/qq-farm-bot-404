@@ -9,6 +9,7 @@ const { analyzeLands, resolveRemovableHarvestedLands } = require('./farm-land-an
 const { runFertilizerByConfig } = require('./farm-fertilizer');
 const { autoPlantEmptyLands } = require('./planting-service');
 const { startFertilizerBuyCheckTimer, stopFertilizerBuyCheckTimer } = require('./farm-scheduler');
+const { farmOperationGate } = require('./mutation-operation-gate');
 
 // ─── 状态标记 ───
 
@@ -68,6 +69,10 @@ async function checkFarm() {
  * @param {string} opType - 操作类型：'all' | 'harvest' | 'plant' | 'clear' | 'upgrade'
  */
 async function runFarmOperation(opType) {
+  return farmOperationGate.operation(() => runFarmOperationInternal(opType));
+}
+
+async function runFarmOperationInternal(opType) {
   const landsReply = await getAllLands();
   if (!landsReply.lands || landsReply.lands.length === 0) {
     if (opType !== 'all') log('农场', '没有土地数据');
@@ -186,7 +191,7 @@ async function runFarmOperation(opType) {
   // ── 多季作物补肥 ──
   if (opType === 'all' && removeResult && Array.isArray(removeResult.growing) &&
       removeResult.growing.length > 0 && isAutomationOn('fertilizer_multi_season') &&
-      (getAutomation().fertilizer || 'none') !== 'final_normal') {
+      ((getAutomation().fertilizer || 'none') !== 'final_normal' || isAutomationOn('fertilizer_2x2_ripen'))) {
     const multiSeasonLands = [...new Set(
       removeResult.growing.map(id => toNum(id)).filter(Boolean)
     )];
@@ -253,11 +258,11 @@ async function runFarmOperation(opType) {
     }
   }
 
-  // ── 智能施肥（巡田时触发）──
+  // ── 智能施肥与 2x2 催熟（巡田时触发）──
   if (opType === 'all') {
     const fertilizerMode = getAutomation().fertilizer || 'none';
     if (fertilizerMode === 'smart' || fertilizerMode === 'smart_only' || fertilizerMode === 'smart_normal' ||
-        fertilizerMode === 'final_normal' || fertilizerMode === 'final_organic') {
+        fertilizerMode === 'final_normal' || fertilizerMode === 'final_organic' || isAutomationOn('fertilizer_2x2_ripen')) {
       try {
         const fertResult = await runFertilizerByConfig([], { skipNormal: true });
         if (fertResult.organic > 0) actions.push(`有机肥${  fertResult.organic}`);

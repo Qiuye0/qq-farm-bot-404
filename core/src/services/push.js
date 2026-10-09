@@ -98,6 +98,37 @@ async function sendPushooMessage(payload = {}) {
   return parsePushResult(result);
 }
 
+/** 虾推接口地址固定，Token 仅作为路径段，避免拼接任意 URL。 */
+async function sendXtuisMessage(payload = {}, fetchImpl = require('node-fetch')) {
+  const token = assertRequiredText('虾推 Token', payload.token);
+  if (!/^[a-zA-Z0-9_-]+$/.test(token)) throw new Error('虾推 Token 格式无效');
+  const url = new URL(`https://wx.xtuis.cn/${token}.send`);
+  url.searchParams.set('text', assertRequiredText('通知标题', payload.title));
+  url.searchParams.set('desp', assertRequiredText('通知说明', payload.content));
+  try {
+    const response = await fetchImpl(url.toString(), { method: 'GET', timeout: 10000, redirect: 'error' });
+    if (!response.ok) return { ok: false, code: String(response.status), msg: `虾推请求失败 (HTTP ${response.status})` };
+    const body = await response.text();
+    let result;
+    try { result = JSON.parse(body); } catch {
+      if (/^(发送成功|消息发送成功|success|ok)[！!。.]?$/i.test(body.trim())) return { ok: true, code: 'ok', msg: '虾推请求已受理' };
+      // 未确认响应不能当作发送成功。
+      return { ok: false, code: 'invalid_response', msg: '虾推返回了无法识别的响应' };
+    }
+    const parsed = parsePushResult(result);
+    const explicitSuccess = result && typeof result === 'object' && (
+      result.code === 0 || result.code === 200 || result.code === '0' || result.code === '200'
+      || result.success === true || result.ok === true
+      || (['queued', 'accepted', 'pending'].includes(result.status) && !!result.msg_id)
+      || /成功|^ok$|^success$/i.test(String(result.msg || result.message || result.status || ''))
+    );
+    return { ok: parsed.ok && !!explicitSuccess, code: parsed.code, msg: parsed.ok && explicitSuccess ? '虾推请求已受理' : '虾推发送失败，请检查 Token 和服务状态' };
+  } catch {
+    // 网络错误往往包含完整 URL，不能把 Token 带入日志或 API 响应。
+    throw new Error('虾推请求失败，请检查网络或稍后重试');
+  }
+}
+
 /**
  * 通过 SMTP 发送邮件（用于下线提醒等推送）
  * @param {object} options - 邮件配置
@@ -136,6 +167,9 @@ async function sendSmtpEmail(options = {}) {
     host: smtpHost,
     port: smtpPort,
     secure: smtpPort === 465,  // 465 端口使用 SSL
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
     auth: {
       user: smtpUser,
       pass: smtpPass
@@ -160,5 +194,6 @@ async function sendSmtpEmail(options = {}) {
 
 module.exports = {
   sendSmtpEmail,
+  sendXtuisMessage,
   sendPushooMessage
 };

@@ -1,40 +1,22 @@
 <script setup lang="ts">
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
-import BaseSelect from '@/components/ui/BaseSelect.vue'
 
-interface OfflineReminderConfig {
-  channel: string
-  reloginUrlMode: string
-  endpoint: string
-  token: string
-  title: string
-  msg: string
-  offlineDeleteSec: number
-  smtpHost: string
-  smtpPort: number
-  smtpUser: string
-  smtpPass: string
-  senderName: string
-  recipientEmail: string
-  emailContent: string
-}
+import BaseSwitch from '@/components/ui/BaseSwitch.vue'
+import type { OfflineConfig } from '@/stores/setting'
 
 defineProps<{
-  channelOptions: { label: string, value: string | number }[]
-  currentChannelDocUrl: string
   saving: boolean
   testing: boolean
   showSave?: boolean
 }>()
 
 const emit = defineEmits<{
-  openDocs: []
   test: []
   save: []
 }>()
 
-const config = defineModel<OfflineReminderConfig>('config', { required: true })
+const config = defineModel<OfflineConfig>('config', { required: true })
 </script>
 
 <template>
@@ -44,123 +26,48 @@ const config = defineModel<OfflineReminderConfig>('config', { required: true })
       下线提醒
     </h4>
 
-    <div class="space-y-3">
-      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div class="flex flex-col gap-1.5">
-          <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-700 font-medium dark:text-gray-300">推送渠道</span>
-            <BaseButton
-              variant="text"
-              size="sm"
-              :disabled="!currentChannelDocUrl"
-              @click="emit('openDocs')"
-            >
-              官网
-            </BaseButton>
-          </div>
-          <BaseSelect
-            v-model="config.channel"
-            :options="channelOptions"
-          />
-        </div>
-        <BaseInput
-          v-if="config.channel !== 'smtp'"
-          v-model.number="config.offlineDeleteSec"
-          label="离线删除账号 (秒)"
-          type="number"
-          min="0"
-          placeholder="0 表示不删除"
-        />
-        <BaseInput
-          v-else
-          v-model.number="config.smtpPort"
-          label="SMTP 端口"
-          type="number"
-          min="1"
-          max="65535"
-          placeholder="465"
+    <div class="space-y-4">
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <BaseSwitch v-model="config.smtpEnabled" label="邮件通知" />
+        <BaseSwitch v-model="config.xtuisEnabled" label="虾推通知" />
+      </div>
+      <p class="text-xs text-gray-500 dark:text-gray-400">
+        两个渠道可同时开启、单独开启或全部关闭。说明会自动附带账号名称、下线原因和离线时长。
+      </p>
+      <BaseInput v-model="config.title" label="通知标题" placeholder="账号下线提醒" />
+      <div class="flex flex-col gap-1.5">
+        <label for="offline-notification-description" class="text-sm text-gray-700 font-medium dark:text-gray-300">通知说明</label>
+        <textarea
+          id="offline-notification-description"
+          v-model="config.msg"
+          rows="3"
+          placeholder="账号已下线，请及时检查"
+          class="w-full border border-gray-300 rounded-md bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
         />
       </div>
 
-      <template v-if="config.channel === 'smtp'">
+      <div v-if="config.smtpEnabled" class="space-y-3 border border-gray-200 rounded-lg p-3 dark:border-gray-700">
+        <h5 class="text-sm font-medium">邮件通知</h5>
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <BaseInput
-            v-model="config.smtpHost"
-            label="SMTP 服务器地址"
-            type="text"
-            placeholder="如 smtp.qq.com"
-          />
-          <BaseInput
-            v-model="config.smtpUser"
-            label="邮箱账号"
-            type="text"
-            placeholder="发件人邮箱地址"
-          />
+          <BaseInput v-model="config.smtpHost" label="SMTP 服务器地址" placeholder="如 smtp.qq.com" />
+          <BaseInput v-model.number="config.smtpPort" label="SMTP 端口" type="number" min="1" max="65535" placeholder="465" />
+          <BaseInput v-model="config.smtpUser" label="邮箱账号" placeholder="发件人邮箱地址" />
+          <BaseInput v-model="config.smtpPass" label="授权码" type="password" placeholder="SMTP 授权码" />
+          <BaseInput v-model="config.recipientEmail" label="收件人邮箱" placeholder="接收通知的邮箱地址" />
+          <BaseInput v-model="config.senderName" label="发件人名称" placeholder="发件人显示名称" />
         </div>
+      </div>
 
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <BaseInput
-            v-model="config.smtpPass"
-            label="授权码"
-            type="password"
-            placeholder="SMTP 授权码"
-          />
-          <BaseInput
-            v-model="config.recipientEmail"
-            label="收件人邮箱"
-            type="text"
-            placeholder="接收通知的邮箱地址"
-          />
+      <div v-if="config.xtuisEnabled" class="space-y-3 border border-gray-200 rounded-lg p-3 dark:border-gray-700">
+        <div class="flex items-center justify-between">
+          <h5 class="text-sm font-medium">虾推通知</h5>
+          <a href="https://xtuis.cn/" target="_blank" rel="noopener noreferrer" class="text-sm text-blue-500">虾推官网</a>
         </div>
-
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <BaseInput
-            v-model="config.senderName"
-            label="发件人名称"
-            type="text"
-            placeholder="发件人显示名称"
-          />
-          <BaseInput
-            v-model="config.emailContent"
-            label="发信内容"
-            type="text"
-            placeholder="掉线提醒的自定义内容"
-          />
-        </div>
-      </template>
-
-      <template v-else>
-        <BaseInput
-          v-model="config.endpoint"
-          label="接口地址"
-          type="text"
-          :disabled="config.channel !== 'webhook'"
-          placeholder="Webhook 渠道填写接口地址"
-        />
-
-        <BaseInput
-          v-model="config.token"
-          label="Token"
-          type="text"
-          placeholder="接收端 token"
-        />
-
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <BaseInput
-            v-model="config.title"
-            label="标题"
-            type="text"
-            placeholder="提醒标题"
-          />
-        </div>
-
-        <BaseInput
-          v-model="config.msg"
-          label="内容"
-          type="text"
-          placeholder="提醒内容"
-        />
-      </template>
+        <BaseInput v-model="config.xtuisToken" label="虾推 Token" type="password" placeholder="填写虾推 Token" />
+      </div>
+      <p v-if="!config.smtpEnabled && !config.xtuisEnabled" class="text-sm text-gray-500 dark:text-gray-400">
+        所有通知渠道已关闭。
+      </p>
     </div>
 
     <div class="mt-4 flex justify-end gap-2 border-t pt-3 dark:border-gray-700">
@@ -168,7 +75,7 @@ const config = defineModel<OfflineReminderConfig>('config', { required: true })
         variant="secondary"
         size="sm"
         :loading="testing"
-        :disabled="saving"
+        :disabled="saving || (!config.smtpEnabled && !config.xtuisEnabled)"
         @click="emit('test')"
       >
         测试通知

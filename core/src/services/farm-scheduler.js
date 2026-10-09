@@ -49,6 +49,7 @@ function stopFertilizerBuyCheckTimer() {
 
 /** 执行一次化肥购买检测 */
 async function checkFertilizerBuyOnce() {
+  if (require('./mutation-operation-gate').farmOperationGate.isActive()) return;
   if (!isAutomationOn('fertilizer_buy_organic') && !isAutomationOn('fertilizer_buy_normal')) return;
 
   try {

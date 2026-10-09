@@ -19,53 +19,9 @@ function getOfflineReminderConfig(store, currentUser, body) {
   return { ...(saved || {}), ...(body || {}) };
 }
 
-async function sendOfflineReminderTest(config) {
-  const { sendPushooMessage, sendSmtpEmail } = require("../services/push");
-  const channel = String(config.channel || "smtp").trim().toLowerCase();
-  if (channel === "smtp") {
-    const smtpHost = String(config.smtpHost || "").trim();
-    const smtpPort = Number(config.smtpPort) || 465;
-    const smtpUser = String(config.smtpUser || "").trim();
-    const smtpPass = String(config.smtpPass || "").trim();
-    const senderName = String(config.senderName || "").trim();
-    const recipientEmail = String(config.recipientEmail || "").trim();
-    if (!smtpHost) return { error: "SMTP服务器地址不能为空" };
-    if (!smtpUser) return { error: "邮箱账号不能为空" };
-    if (!smtpPass) return { error: "授权码不能为空" };
-    if (!recipientEmail) return { error: "收件人邮箱不能为空" };
-
-    return sendSmtpEmail({
-      smtpHost,
-      smtpPort,
-      smtpUser,
-      smtpPass,
-      senderName,
-      recipientEmail,
-      subject: "下线提醒（测试）",
-      content: "这是一封测试邮件，收到它代表你配置邮箱成功了！--For Dot.",
-    });
-  }
-
-  const endpoint = String(config.endpoint || "").trim();
-  const token = String(config.token || "").trim();
-  const titleBase = String(config.title || "账号下线提醒").trim();
-  const msgBase = String(config.msg || "账号下线").trim();
-  if (!channel) return { error: "推送渠道不能为空" };
-  if (channel === "webhook" && !endpoint) {
-    return { error: "Webhook 渠道需要填写接口地址" };
-  }
-  if (channel !== "webhook" && !token) {
-    return { error: "推送 token 不能为空" };
-  }
-
-  const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
-  return sendPushooMessage({
-    channel,
-    endpoint,
-    token,
-    title: `${titleBase}（测试）`,
-    content: `${msgBase}\n\n这是一条下线提醒测试消息。\n时间: ${ts}`,
-  });
+async function sendOfflineReminderTest(config, accountName = '测试账号') {
+  const { buildOfflineNotification, sendOfflineNotifications } = require('../services/offline-notification');
+  return sendOfflineNotifications(config, buildOfflineNotification(config, { accountName, test: true }));
 }
 
 function buildSettingsPayload(store, accountId, currentUser) {
@@ -337,9 +293,14 @@ function registerAdminSettingsRoutes({
   app.post("/api/settings/offline-reminder/test", async (req, res) => {
     try {
       const currentUser = req.currentUser;
+      if (!currentUser) return res.status(401).json({ ok: false, error: "未登录" });
       const body = req.body && typeof req.body === "object" ? req.body : {};
+      const accountId = getAccountIdFromRequest(req);
+      if (accountId && !canAccessAccount(req, accountId)) return res.status(403).json({ ok: false, error: "无权访问此账号" });
+      const accounts = store.getAccounts ? store.getAccounts().accounts || [] : [];
+      const account = accounts.find(item => String(item.id) === String(accountId));
       const config = getOfflineReminderConfig(store, currentUser, body);
-      const result = await sendOfflineReminderTest(config);
+      const result = await sendOfflineReminderTest(config, account?.name || '测试账号');
       if (!result) {
         return res
           .status(400)

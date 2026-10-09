@@ -1320,7 +1320,8 @@ function applyRuntimeConfig(config, syncStatusAfter = false) {
             const prevFert = String(prevAuto && prevAuto.fertilizer ? prevAuto.fertilizer : '').toLowerCase();
             const newFert = String(newAuto && newAuto.fertilizer ? newAuto.fertilizer : '').toLowerCase();
             const fertChanged = prevFert !== newFert;
-            if (fertChanged && (newFert === 'both' || newFert === 'organic' || newFert === 'smart' || newFert === 'smart_only' || newFert === 'smart_normal' || newFert === 'final_normal' || newFert === 'final_organic')) {
+            const size2RipenEnabled = !prevAuto?.fertilizer_2x2_ripen && newAuto?.fertilizer_2x2_ripen;
+            if (size2RipenEnabled || (fertChanged && (newAuto?.fertilizer_2x2_ripen || newFert === 'both' || newFert === 'organic' || newFert === 'smart' || newFert === 'smart_only' || newFert === 'smart_normal' || newFert === 'final_normal' || newFert === 'final_organic'))) {
                 workerScheduler.setTimeoutTask('fertilizer_immediate_after_save', 1000, async () => {
                     if (!loginReady) return;
                     try {
@@ -1394,6 +1395,8 @@ onMasterMessage(async (msg) => {
 // ==================== 启动/停止 Bot ====================
 
 async function startBot(config) {
+    try { require('../services/mutation-test').initializeMutationTest(sendToMaster); }
+    catch (error) { log('测变异', `初始化失败: ${error.message}`); }
     if (isRunning) return;
     isRunning = true;
 
@@ -1447,6 +1450,7 @@ async function startBot(config) {
     // 断线监听
     if (onDisconnectHandler) networkEvents.off('disconnect', onDisconnectHandler);
     onDisconnectHandler = () => {
+        require('../services/mutation-test').stopMutationTest('账号已断线，测试已停止');
         if (!loginReady) return;
         loginReady = false;
         log('系统', '连接断开，暂停自动化任务，等待重连...');
@@ -1594,6 +1598,7 @@ async function startBot(config) {
 }
 
 async function stopBot() {
+    require('../services/mutation-test').stopMutationTest('账号已停止');
     if (!isRunning) return exitWorker(0);
     saveStats();
     isRunning = false;
@@ -1740,6 +1745,21 @@ async function handleApiCall(msg) {
                 break;
             case 'getBagSeeds':
                 result = await require('../services/warehouse').getBagSeeds();
+                break;
+            case 'getMutationTest':
+                result = require('../services/mutation-test').getMutationTest().snapshot();
+                break;
+            case 'clearMutationRecords':
+                result = require('../services/mutation-recorder').clearMutationRecords(process.env.FARM_ACCOUNT_ID);
+                break;
+            case 'getMutationTestSeeds':
+                result = await require('../services/mutation-test').getMutationTestSeeds();
+                break;
+            case 'startMutationTest':
+                result = await require('../services/mutation-test').getMutationTest().start(args[0]);
+                break;
+            case 'stopMutationTest':
+                result = require('../services/mutation-test').getMutationTest().stop();
                 break;
             case 'getDogSkillGiftStatus': {
                 const dogGifts = require('../services/dog-skill-gifts');
